@@ -111,6 +111,10 @@ inputs:
     description: 'Upload the JSONL session transcript as an artifact.'
     required: false
     default: 'true'
+  working-directory:
+    description: 'Directory holding the pull request checkout, where the agent runs.'
+    required: false
+    default: '.'
 
 outputs:
   skipped:
@@ -262,6 +266,7 @@ runs:
         PI_PR: ${{ inputs.pr-number }}
         PI_IN: ${{ steps.gate.outputs.in }}
         PI_REVIEW_MODE: ${{ inputs.mode }}
+      working-directory: ${{ inputs.working-directory }}
       run: node "${{ github.action_path }}/../runner.mjs"
 
     - name: Post review

@@ -1,39 +1,22 @@
 name: Pi Code Review
 
-# One approve-or-request-changes review per push, posted by the pr-review
-# sub-action. Older Pi reviews are collapsed. Optional repo guidance goes in
-# .github/pi/review.md.
+# One approve-or-request-changes review per push, posted as github-actions[bot].
+# Older Pi reviews are collapsed. Optional repo guidance: .github/pi/review.md.
+# Needs the CLIPROXYAPI_API_KEY secret and CLIPROXYAPI_BASE_URL variable.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-concurrency:
-  group: pi-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   pi-review:
-    # Same-repo, human-authored PRs only: forks get no secrets, and bots are skipped.
-    if: >-
-      github.event.pull_request.user.type != 'Bot' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - uses: hank-warren/pi-action/pr-review@v1
-        with:
-          cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
-          cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
-          # Defaults: cpa/gpt-6.2-sol, falling back to cpa/claude-opus-5-5, thinking high.
-          # mode: comment             # never approve or block, just comment
-          # app-client-id: ${{ vars.PI_APP_CLIENT_ID }}        # post as your App instead of
-          # app-private-key: ${{ secrets.PI_APP_PRIVATE_KEY }} # github-actions[bot]
+    uses: hank-warren/pi-action/.github/workflows/pr-review.yml@v1
+    secrets: inherit
+    # with:
+    #   mode: comment        # never approve or block, just comment
+    #   model: cpa/claude-opus-5-5
+    #   fallback-models: cpa/gpt-6.2-sol
