@@ -35,7 +35,7 @@ try {
     plan = { ...plan, event: "COMMENT" };
     warn(TITLE, "The full diff was unavailable, so the approval is posted as a comment.");
   }
-  body = buildBody({ verdict: plan.verdict, report: result.report, model });
+  body = buildBody({ verdict: plan.verdict, report: result.report, model, partial: partialDiff });
 } catch (error) {
   fail(TITLE, `The agent did not produce a usable review: ${error.message}`);
 }
@@ -113,7 +113,8 @@ try {
   }
 
   const mutation = `mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }`;
-  const old = supersededReviews(nodes, keepId);
+  // An incomplete review must not hide earlier findings it could not re-check.
+  const old = partialDiff ? [] : supersededReviews(nodes, keepId);
   for (const node of old) run("gh", ["api", "graphql", "-f", `id=${node.id}`, "-f", `query=${mutation}`]);
   if (old.length) summary(`Collapsed ${old.length} superseded review(s).`);
 } catch (error) {

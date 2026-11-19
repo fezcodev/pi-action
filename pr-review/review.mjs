@@ -37,8 +37,11 @@ export function planReview(result, mode) {
  * quiet. Findings get the agent's report. Both end with the footer and marker
  * the collapse step keys on.
  */
-export function buildBody({ verdict, report, model }) {
-  const text = verdict === "approve" ? "✅ No blocking issues." : truncate((report ?? "").trim(), 60000);
+export function buildBody({ verdict, report, model, partial = false }) {
+  const clean = partial
+    ? "⚠️ No blocking issues in the changes I could see, but GitHub did not return the full diff, so this is not an approval."
+    : "✅ No blocking issues.";
+  const text = verdict === "approve" ? clean : truncate((report ?? "").trim(), 60000);
   if (!text) throw new Error("the review body is empty but the verdict is request-changes");
   return `${text}\n\n${footer("Automated review", model)}\n${REVIEW_MARKER}\n`;
 }

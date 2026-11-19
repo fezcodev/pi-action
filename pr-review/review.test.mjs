@@ -40,6 +40,12 @@ test("buildBody keeps approvals to one line and ignores the report", () => {
   assert.ok(body.trimEnd().endsWith(REVIEW_MARKER));
 });
 
+test("buildBody does not vouch for a PR whose full diff was unavailable", () => {
+  const body = buildBody({ verdict: "approve", report: "", model: "", partial: true });
+  assert.match(body, /not an approval/);
+  assert.doesNotMatch(body, /✅/);
+});
+
 test("buildBody carries findings and refuses an empty blocking review", () => {
   const body = buildBody({ verdict: "request-changes", report: "1. `a.js:3`: boom\n", model: "" });
   assert.match(body, /^1\. `a\.js:3`: boom\n/);

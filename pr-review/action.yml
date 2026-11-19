@@ -197,8 +197,16 @@ runs:
         PI_PR: ${{ inputs.pr-number }}
         PI_EXPECTED_SHA: ${{ inputs.head-sha }}
         PI_EXPECTED_BASE: ${{ inputs.base-ref }}
+        PI_EVENT_PR: ${{ github.event.pull_request.number }}
+        PI_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+        PI_EVENT_BASE: ${{ github.event.pull_request.base.ref }}
       run: |
         set -euo pipefail
+        # head-sha and base-ref default to the triggering PR's; they say nothing about another PR.
+        if [ "$PI_PR" != "$PI_EVENT_PR" ]; then
+          [ "$PI_EXPECTED_SHA" != "$PI_EVENT_SHA" ] || PI_EXPECTED_SHA=""
+          [ "$PI_EXPECTED_BASE" != "$PI_EVENT_BASE" ] || PI_EXPECTED_BASE=""
+        fi
         [[ "$PI_PR" =~ ^[0-9]+$ ]] || { echo "::error title=pi-pr-review::pr-number must be a number, got '${PI_PR}'."; exit 1; }
         work="${RUNNER_TEMP}/pi-pr-review"
         rm -rf "$work" && mkdir -p "$work/in"
