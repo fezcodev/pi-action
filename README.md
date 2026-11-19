@@ -48,9 +48,8 @@ newest stays expanded. See [`examples/workflows/pi-review.yml`](examples/workflo
     cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
 ```
 
-- **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/gpt-6.1-sol` then `cpa/claude-opus-5-5` on
-  quota exhaustion or an unavailable model, with `thinking: high`. Out of quota on all of them posts
-  nothing and exits 0.
+- **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
+  unavailable model, with `thinking: high`. Out of quota on both posts nothing and exits 0.
 - **The agent never writes to GitHub, or to disk.** The action prefetches the PR's metadata, diff and
   earlier reviews into files; the agent reads those and the checkout with read-only tools
   (`read,grep,find,ls`) and answers with a verdict plus a review body. A deterministic step posts
@@ -205,7 +204,7 @@ recorded in [`app-manifest.yml`](app-manifest.yml).
 - uses: hank-warren/pi-action@v1
   with:
     model: cpa/claude-opus-5-5
-    fallback-models: cpa/gpt-6.1-sol
+    fallback-models: cpa/gpt-6.2-sol
     # ...
 ```
 
@@ -229,7 +228,7 @@ The action walks the chain `model`, then `fallback-models` in order:
 Fallback restarts the task from scratch on the next model; it does not continue the previous model's
 partial run. Keep posting as the skill's last step so a run that dies before it leaves nothing to
 duplicate. `timeout-minutes` is one budget for all attempts, `max-turns` applies per attempt, and the
-step summary lists what happened to each model. Each attempt's agent sees its bare model id as `PI_MODEL_ID` (e.g. `gpt-6.1-sol`), so a
+step summary lists what happened to each model. Each attempt's agent sees its bare model id as `PI_MODEL_ID` (e.g. `gpt-6.2-sol`), so a
 skill can sign its output with the model that actually answered:
 `*Automated review by Pi - $PI_MODEL_ID*`. The same skill and tools work across Claude
 (`anthropic-messages`) and GPT (`openai-responses`) models; expect somewhat different output.

@@ -35,7 +35,7 @@ inputs:
   fallback-models:
     description: >-
       Ordered gateway models to fall back to, comma- or newline-separated, e.g.
-      cpa/gpt-6.1-sol. Every model is tried, even one the gateway's /models does not
+      cpa/gpt-6.2-sol. Every model is tried, even one the gateway's /models does not
       list; a run that ends on quota exhaustion or an unavailable model (unknown,
       disabled, no usable credential) is re-run from scratch on the next one. timeout-minutes covers all
       attempts.

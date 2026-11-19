@@ -80,7 +80,7 @@ inputs:
   fallback-models:
     description: 'Ordered fallback gateway models.'
     required: false
-    default: 'cpa/gpt-6.2-sol, cpa/gpt-6.1-sol'
+    default: 'cpa/gpt-6.2-sol'
   thinking:
     description: 'Thinking level.'
     required: false

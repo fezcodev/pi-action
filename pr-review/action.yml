@@ -69,7 +69,7 @@ inputs:
   fallback-models:
     description: 'Ordered fallback gateway models, comma- or newline-separated.'
     required: false
-    default: 'cpa/gpt-6.1-sol, cpa/claude-opus-5-5'
+    default: 'cpa/claude-opus-5-5'
   thinking:
     description: 'Thinking level.'
     required: false

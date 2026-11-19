@@ -33,10 +33,10 @@ test("planReview rejects anything but the two verdicts", () => {
 });
 
 test("buildBody keeps approvals to one line and ignores the report", () => {
-  const body = buildBody({ verdict: "approve", report: "I checked everything.", model: "cpa/gpt-6.1-sol" });
+  const body = buildBody({ verdict: "approve", report: "I checked everything.", model: "cpa/gpt-6.2-sol" });
   assert.match(body, /^✅ No blocking issues\.\n/);
   assert.doesNotMatch(body, /checked everything/);
-  assert.match(body, /`gpt-6\.1-sol`/);
+  assert.match(body, /`gpt-6\.2-sol`/);
   assert.ok(body.trimEnd().endsWith(REVIEW_MARKER));
 });
 
