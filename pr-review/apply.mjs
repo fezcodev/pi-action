@@ -90,7 +90,9 @@ try {
   ).data.repository.pullRequest.reviews.nodes;
   const keepId = review.node_id;
 
-  if (event !== "APPROVE" && event !== "REQUEST_CHANGES") {
+  // An approval this token could only post as a comment still clears its earlier block; a
+  // comment-mode review never does.
+  if (plan.event === "APPROVE" && event === "COMMENT") {
     for (const node of staleBlockingReviews(nodes, keepId)) {
       api("PUT", `repos/${repo}/pulls/${pr}/reviews/${node.databaseId}/dismissals`, {
         message: "Superseded by a newer Pi review.",
