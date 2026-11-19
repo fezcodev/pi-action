@@ -73,7 +73,12 @@ jobs:
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
           app-client-id: ${{ inputs.use-app && vars.PI_APP_CLIENT_ID || '' }}
           app-private-key: ${{ inputs.use-app && secrets.PI_APP_PRIVATE_KEY || '' }}
+          # The bash-capable agent gets a contents:read App token; the gh lookup needs nothing more.
+          app-permission-issues: ''
+          app-permission-pull-requests: ''
           github-token: ${{ inputs.use-github-token && github.token || '' }}
+          # Checked locally below before anything is published.
+          upload-transcript: 'false'
 
       - name: Verify the result, identity and transcript
         env:
