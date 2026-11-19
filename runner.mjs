@@ -9,15 +9,16 @@
  * Node builtins plus the GITHUB_OUTPUT / GITHUB_STEP_SUMMARY file protocols.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
 
 import { inferOwner, parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
-import { readProjectProviderSettings } from "./lib/settings.mjs";
+import { validateProviderSettings } from "./lib/settings.mjs";
 
 // The extension registers models under this provider name: `cpa/<model-id>`.
 const PROVIDER_NAME = "cpa";
@@ -261,15 +262,22 @@ writeFileSync(
 );
 let messageThreads = messageThreadsInput === "true";
 let messageThreadsSource = "input";
-const projectSettingsPath = path.join(process.cwd(), ".pi", "settings.json");
-let projectSettingsText;
+// Loaded with the globally installed pi's own SettingsManager (lib/install-pi.sh), the loader the
+// provider uses, so unreadable, unparseable or unlockable files count as empty exactly as they do there.
+let projectSettings;
 try {
-  projectSettingsText = readFileSync(projectSettingsPath, "utf8");
-} catch {
-  // Missing, unreadable or a directory: pi's SettingsManager reads all of these as empty settings.
+  const piRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+  const piEntry = path.join(piRoot, "@earendil-works", "pi-coding-agent", "dist", "index.js");
+  const { SettingsManager } = await import(pathToFileURL(piEntry).href);
+  projectSettings = SettingsManager.create(process.cwd(), agentDir).getProjectSettings();
+} catch (error) {
+  warn(
+    `Could not load pi's settings to check .pi/settings.json (${error instanceof Error ? error.message : String(error)}); ` +
+      "an invalid pi-cliproxyapi-provider block there would leave no gateway models.",
+  );
 }
-if (projectSettingsText !== undefined) {
-  const { error, messageThreads: projectThreads } = readProjectProviderSettings(projectSettingsText);
+if (projectSettings !== undefined) {
+  const { error, messageThreads: projectThreads } = validateProviderSettings(projectSettings);
   if (error) {
     fail(
       `.pi/settings.json: ${error}. The provider extension rejects the file, which leaves no gateway models; ` +
