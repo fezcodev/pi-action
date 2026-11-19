@@ -157,6 +157,7 @@ the runner writes.
 | `app-permission-contents` | `read` | Contents permission of the minted App token. Empty omits it. |
 | `app-permission-issues` | `read` | Issues permission of the minted App token. Empty omits it. |
 | `app-permission-pull-requests` | `write` | Pull requests permission of the minted App token. Empty omits it. |
+| `app-repositories` | — | Repositories the minted App token may access (names within the owner, comma- or newline-separated). Empty keeps every repository the App is installed on. |
 | `github-token` | — | Explicit `GH_TOKEN` for the agent. Mutually exclusive with `app-client-id`. |
 | `working-directory` | `.` | Directory the agent runs in. |
 | `pi-version` | `1.5.2` | Pinned Pi version. |

@@ -32,19 +32,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # With a token for the agent, the task needs it: a gh call only a working token answers.
+      # With a token for the agent, the task needs it: the repository's numeric id, which is not in
+      # the prompt, so only a gh call with a working token answers it.
       - name: Choose the task
         id: task
         env:
           WITH_TOKEN: ${{ inputs.use-app || inputs.use-github-token }}
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$WITH_TOKEN" = "true" ]; then
-            prompt="Using bash, run exactly: gh api repos/${REPO} --jq .full_name
+            prompt="Using bash, run exactly: gh api repos/${REPO} --jq .id
           Then reply with exactly one line: its output, with no other text and no code fences."
             tools="read,bash"
-            expected="$REPO"
+            expected="$(gh api "repos/${REPO}" --jq .id)"
           else
             prompt='Read README.md in the current directory and reply with exactly one line:
           the value of the `pi-version` default listed in the Inputs table,
@@ -73,9 +75,10 @@ jobs:
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
           app-client-id: ${{ inputs.use-app && vars.PI_APP_CLIENT_ID || '' }}
           app-private-key: ${{ inputs.use-app && secrets.PI_APP_PRIVATE_KEY || '' }}
-          # The bash-capable agent gets a contents:read App token; the gh lookup needs nothing more.
+          # The bash-capable agent gets a contents:read App token for this repository only.
           app-permission-issues: ''
           app-permission-pull-requests: ''
+          app-repositories: ${{ github.event.repository.name }}
           github-token: ${{ inputs.use-github-token && github.token || '' }}
           # Checked locally below before anything is published.
           upload-transcript: 'false'
