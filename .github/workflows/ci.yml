@@ -53,6 +53,30 @@ jobs:
             }
           '
 
+      - name: Check the reusable review workflow against pr-review
+        run: |
+          set -euo pipefail
+          python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import yaml
+          action = yaml.safe_load(open("pr-review/action.yml"))["inputs"]
+          flow = yaml.safe_load(open(".github/workflows/pr-review.yml"))
+          inputs = flow[True]["workflow_call"]["inputs"]  # PyYAML reads `on:` as True
+          passed = flow["jobs"]["review"]["steps"][-1]["with"]
+          errors = []
+          for name, spec in inputs.items():
+              if name in action and "default" in action[name] and str(spec.get("default")) != str(action[name]["default"]):
+                  errors.append(f"{name}: default {spec.get('default')!r} != pr-review {action[name]['default']!r}")
+              if name not in ("runs-on", "job-timeout-minutes") and name not in passed:
+                  errors.append(f"{name}: declared but not passed to pr-review")
+          for name in passed:
+              if name not in action:
+                  errors.append(f"{name}: passed but not a pr-review input")
+          if errors:
+              raise SystemExit("pr-review.yml drift:\n  " + "\n  ".join(errors))
+          print(f"pr-review.yml ok, {len(inputs)} inputs")
+          EOF
+
       - name: Guard gateway-only model access
         run: |
           set -euo pipefail

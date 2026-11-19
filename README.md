@@ -34,19 +34,31 @@ your App's `<app-slug>[bot]`, or `github-actions[bot]` without one (see [Bot ide
 
 ## PR review
 
-`hank-warren/pi-action/pr-review@v1` posts one review per push: an approval for a clean PR, or
-"request changes" with `path:line` findings. Older Pi reviews on the PR are collapsed so only the
-newest stays expanded. See [`examples/workflows/pi-review.yml`](examples/workflows/pi-review.yml):
+Pi posts one review per push: an approval for a clean PR, or "request changes" with `path:line`
+findings. Older Pi reviews on the PR are collapsed so only the newest stays expanded. The reusable
+workflow is the whole setup ([`examples/workflows/pi-review.yml`](examples/workflows/pi-review.yml)):
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    persist-credentials: false
-- uses: hank-warren/pi-action/pr-review@v1
-  with:
-    cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
-    cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  pi-review:
+    uses: hank-warren/pi-action/.github/workflows/pr-review.yml@v1
+    secrets:
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}  # gateway URL: vars.CLIPROXYAPI_BASE_URL
 ```
+
+It skips fork and bot PRs, reruns when the PR is retargeted (`edited` with a base change), cancels a
+superseded run, and runs `pr-review` from the same commit as
+the workflow, whatever ref the caller pins. Its inputs are `pr-review`'s, minus identity and `tools` (always read-only), plus
+`cliproxyapi-base-url`, `runs-on` and `job-timeout-minutes`. Pass only the gateway key, not
+`secrets: inherit`, which would hand the workflow every repository secret. For an App identity or more control, use the
+`hank-warren/pi-action/pr-review@v1` action in your own job after `actions/checkout` with
+`persist-credentials: false`.
 
 - **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
   unavailable model, with `thinking: high`. Out of quota on both posts nothing and exits 0.

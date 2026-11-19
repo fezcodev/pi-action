@@ -15,6 +15,8 @@ const TITLE = "pi-pr-review";
 const repo = env("PI_REPO");
 const pr = Number.parseInt(env("PI_PR"), 10);
 const headSha = env("PI_HEAD_SHA");
+const baseRef = env("PI_BASE_REF");
+const partialDiff = env("PI_PARTIAL_DIFF") === "true";
 const mode = env("PI_REVIEW_MODE", "verdict");
 const dryRun = env("PI_DRY_RUN") === "true";
 const model = env("PI_MODEL_USED");
@@ -28,7 +30,12 @@ let body;
 try {
   const result = parseResult(process.env.PI_RESULT);
   plan = planReview(result, mode);
-  body = buildBody({ verdict: plan.verdict, report: result.report, model });
+  // Without the full diff the agent may not have seen every change, so it cannot vouch for the PR.
+  if (partialDiff && plan.event === "APPROVE") {
+    plan = { ...plan, event: "COMMENT" };
+    warn(TITLE, "The full diff was unavailable, so the approval is posted as a comment.");
+  }
+  body = buildBody({ verdict: plan.verdict, report: result.report, model, partial: partialDiff });
 } catch (error) {
   fail(TITLE, `The agent did not produce a usable review: ${error.message}`);
 }
@@ -49,9 +56,13 @@ if (dryRun) {
 
 // A push after the snapshot means a newer run reviews the new head; this one
 // is stale and must not post.
-const currentHead = api("GET", `repos/${repo}/pulls/${pr}`).head.sha;
-if (currentHead !== headSha) {
-  warn(TITLE, `PR head moved from ${headSha.slice(0, 7)} to ${currentHead.slice(0, 7)} during review; not posting.`);
+const live = api("GET", `repos/${repo}/pulls/${pr}`);
+if (live.head.sha !== headSha) {
+  warn(TITLE, `PR head moved from ${headSha.slice(0, 7)} to ${live.head.sha.slice(0, 7)} during review; not posting.`);
+  process.exit(0);
+}
+if (baseRef && live.base.ref !== baseRef) {
+  warn(TITLE, `PR was retargeted from ${baseRef} to ${live.base.ref} during review; not posting.`);
   process.exit(0);
 }
 
@@ -90,7 +101,9 @@ try {
   ).data.repository.pullRequest.reviews.nodes;
   const keepId = review.node_id;
 
-  if (event !== "APPROVE" && event !== "REQUEST_CHANGES") {
+  // An approval this token could only post as a comment still clears its earlier block; a
+  // comment-mode review never does.
+  if (plan.event === "APPROVE" && event === "COMMENT") {
     for (const node of staleBlockingReviews(nodes, keepId)) {
       api("PUT", `repos/${repo}/pulls/${pr}/reviews/${node.databaseId}/dismissals`, {
         message: "Superseded by a newer Pi review.",
@@ -100,7 +113,11 @@ try {
   }
 
   const mutation = `mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }`;
-  const old = supersededReviews(nodes, keepId);
+  // An incomplete review must not hide earlier findings it could not re-check.
+  // A change request still in force stays expanded unless this review approves.
+  const old = partialDiff
+    ? []
+    : supersededReviews(nodes, keepId).filter((node) => event === "APPROVE" || node.state !== "CHANGES_REQUESTED");
   for (const node of old) run("gh", ["api", "graphql", "-f", `id=${node.id}`, "-f", `query=${mutation}`]);
   if (old.length) summary(`Collapsed ${old.length} superseded review(s).`);
 } catch (error) {

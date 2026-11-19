@@ -14,7 +14,7 @@ branding:
 # agent cannot alter the scripts that later run with the write token.
 #
 # Check out the PR before this action (actions/checkout on a pull_request event
-# does), ideally with `persist-credentials: false`.
+# does) with `persist-credentials: false`; the action refuses a checkout holding a token.
 
 inputs:
   cliproxyapi-api-key:
@@ -30,9 +30,17 @@ inputs:
   head-sha:
     description: >-
       Head commit the checkout was made from. The review is skipped when the PR's live head differs,
-      so the files on disk always match the diff being reviewed. Empty reviews the live head.
+      so the files on disk always match the diff being reviewed. Empty uses the triggering PR's head
+      when reviewing that PR, and skips the check for any other.
     required: false
-    default: ${{ github.event.pull_request.head.sha }}
+    default: ''
+  base-ref:
+    description: >-
+      Base branch the checkout was merged against. The review is skipped when the PR has since been
+      retargeted. Empty uses the triggering PR's base when reviewing that PR, and skips the check for
+      any other.
+    required: false
+    default: ''
   repository:
     description: 'owner/name of the pull request''s repository. The checkout in the working directory must be this repository.'
     required: false
@@ -51,7 +59,7 @@ inputs:
     required: false
     default: ${{ github.token }}
   app-client-id:
-    description: 'GitHub App Client ID. When set, the review posts as <app-slug>[bot] and the agent gets a read-only App token for gh reads.'
+    description: 'GitHub App Client ID. When set, the review posts as <app-slug>[bot]; an agent given bash also gets a read-only App token for gh.'
     required: false
     default: ''
   app-private-key:
@@ -111,6 +119,10 @@ inputs:
     description: 'Upload the JSONL session transcript as an artifact.'
     required: false
     default: 'true'
+  working-directory:
+    description: 'Directory holding the pull request checkout, where the agent runs.'
+    required: false
+    default: '.'
 
 outputs:
   skipped:
@@ -136,8 +148,10 @@ runs:
   using: composite
   steps:
     - name: Check inputs
+      id: inputs
       shell: bash
       env:
+        PI_REPO: ${{ inputs.repository }}
         MODE: ${{ inputs.mode }}
         APP_ID: ${{ inputs.app-client-id }}
         APP_KEY: ${{ inputs.app-private-key }}
@@ -147,23 +161,27 @@ runs:
         if [ -n "$APP_ID" ] && [ -z "$APP_KEY" ]; then
           echo "::error title=pi-pr-review::app-private-key is required with app-client-id."; exit 1
         fi
+        [[ "$PI_REPO" == */* ]] || { echo "::error title=pi-pr-review::repository must be owner/name, got '${PI_REPO}'."; exit 1; }
+        { echo "owner=${PI_REPO%%/*}"; echo "name=${PI_REPO#*/}"; } >> "$GITHUB_OUTPUT"
 
     - name: Set up Node
       uses: actions/setup-node@v4
       with:
         node-version: '22'
 
-    - name: Mint App write token
-      id: app-token
-      if: ${{ inputs.app-client-id != '' }}
-      uses: actions/create-github-app-token@v3
-      with:
-        client-id: ${{ inputs.app-client-id }}
-        private-key: ${{ inputs.app-private-key }}
-        owner: ${{ github.repository_owner }}
-        permission-contents: read
-        permission-pull-requests: write
+    # An empty list would make pi fall back to its default tools, write and bash included. Same
+    # trimming as the runner, so no blank value slips past one and not the other.
+    - name: Check tools
+      shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+      run: |
+        node -e 'if (!process.env.TOOLS.split(",").some((t) => t.trim())) process.exit(1)' \
+          || { echo "::error title=pi-pr-review::tools must name at least one tool."; exit 1; }
 
+    # The write token is minted only after the agent exits (see "Mint App write token"):
+    # read-only tools are no filesystem sandbox, and a token minted earlier sits in
+    # runner files the agent could read.
     - name: Mint App read-only token
       id: read-token
       if: ${{ inputs.app-client-id != '' }}
@@ -171,7 +189,10 @@ runs:
       with:
         client-id: ${{ inputs.app-client-id }}
         private-key: ${{ inputs.app-private-key }}
-        owner: ${{ github.repository_owner }}
+        owner: ${{ steps.inputs.outputs.owner }}
+        repositories: ${{ steps.inputs.outputs.name }}
+        # Revoked before the agent starts unless the agent gets it (bash).
+        skip-token-revoke: ${{ !contains(inputs.tools, 'bash') }}
         permission-contents: read
         permission-issues: read
         permission-pull-requests: read
@@ -180,26 +201,41 @@ runs:
       id: gate
       shell: bash
       env:
-        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
+        GH_TOKEN: ${{ steps.read-token.outputs.token || inputs.github-token }}
         PI_REPO: ${{ inputs.repository }}
         PI_PR: ${{ inputs.pr-number }}
         PI_EXPECTED_SHA: ${{ inputs.head-sha }}
+        PI_EXPECTED_BASE: ${{ inputs.base-ref }}
+        PI_EVENT_PR: ${{ github.event.pull_request.number }}
+        PI_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+        PI_EVENT_BASE: ${{ github.event.pull_request.base.ref }}
       run: |
         set -euo pipefail
+        # Unset expectations come from the triggering PR, and only when it is the one under review.
+        if [ "$PI_REPO" = "$GITHUB_REPOSITORY" ] && [ "$PI_PR" = "$PI_EVENT_PR" ]; then
+          PI_EXPECTED_SHA="${PI_EXPECTED_SHA:-$PI_EVENT_SHA}"
+          PI_EXPECTED_BASE="${PI_EXPECTED_BASE:-$PI_EVENT_BASE}"
+        elif [ -n "$PI_EVENT_PR" ] && [ -z "$PI_EXPECTED_SHA" ]; then
+          # The default checkout is the triggering PR; without head-sha nothing ties it to this one.
+          echo "::error title=pi-pr-review::Reviewing #${PI_PR} from a pull_request run for #${PI_EVENT_PR} needs head-sha for the checkout you made."; exit 1
+        fi
         [[ "$PI_PR" =~ ^[0-9]+$ ]] || { echo "::error title=pi-pr-review::pr-number must be a number, got '${PI_PR}'."; exit 1; }
         work="${RUNNER_TEMP}/pi-pr-review"
         rm -rf "$work" && mkdir -p "$work/in"
         gh api "repos/${PI_REPO}/pulls/${PI_PR}" --jq '{number, title, body, state, draft,
           author: .user.login, author_type: .user.type, base: .base.ref, head: .head.ref,
-          head_sha: .head.sha, additions, deletions, changed_files}' > "$work/in/pr.json"
+          head_sha: .head.sha, base_sha: .base.sha, additions, deletions, changed_files}' > "$work/in/pr.json"
         IFS=$'\t' read -r state type login sha < <(jq -r '[.state, .author_type, .author, .head_sha] | @tsv' "$work/in/pr.json")
         run=true
+        partial=false
         if [ "$state" != "open" ]; then
           run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: it is ${state}."
         elif [ "$type" != "User" ]; then
           run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: opened by ${login} (${type}); Pi reviews human-authored PRs only."
         elif [ -n "$PI_EXPECTED_SHA" ] && [ "$PI_EXPECTED_SHA" != "$sha" ]; then
           run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: head is ${sha:0:7}, not the checked-out ${PI_EXPECTED_SHA:0:7}; the run for the newer push reviews it."
+        elif [ -n "$PI_EXPECTED_BASE" ] && [ "$PI_EXPECTED_BASE" != "$(jq -r .base "$work/in/pr.json")" ]; then
+          run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: it now targets $(jq -r .base "$work/in/pr.json"), not the checked-out ${PI_EXPECTED_BASE}."
         fi
         if [ "$run" = "true" ]; then
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/files?per_page=100" \
@@ -207,6 +243,7 @@ runs:
             | jq -s . > "$work/in/files.json"
           # The diff endpoint refuses very large PRs; fall back to the per-file patches.
           if ! gh api "repos/${PI_REPO}/pulls/${PI_PR}" -H 'Accept: application/vnd.github.diff' > "$work/in/diff.patch" 2>/dev/null; then
+            partial=true
             echo "::warning title=pi-pr-review::Full diff unavailable; using per-file patches (very large files may be missing)."
             jq -r '.[] | "--- \(.previous_filename // .filename)\n+++ \(.filename)\n\(.patch // "(no textual patch: binary or too large)")\n"' \
               "$work/in/files.json" > "$work/in/diff.patch"
@@ -215,12 +252,41 @@ runs:
             --jq '.[] | {author: .user.login, state, submitted_at, commit_id, body}' | jq -s . > "$work/in/reviews.json"
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/comments?per_page=100" \
             --jq '.[] | {author: .user.login, path, line, body, created_at}' | jq -s . > "$work/in/review-comments.json"
+          # Repo guidance comes from the base branch: a PR must not rewrite the rules it is reviewed by.
+          base_sha="$(jq -r .base_sha "$work/in/pr.json")"
+          gh api "repos/${PI_REPO}/contents/.github/pi/review.md?ref=${base_sha}" \
+            -H 'Accept: application/vnd.github.raw' > "$work/in/review-guidance.md" 2>/dev/null \
+            || rm -f "$work/in/review-guidance.md"
         fi
         {
           echo "run=${run}"
           echo "head-sha=${sha}"
+          echo "base-ref=$(jq -r .base "$work/in/pr.json")"
+          echo "partial-diff=${partial}"
           echo "in=${work}/in"
         } >> "$GITHUB_OUTPUT"
+
+    # Read-only tools are no filesystem sandbox: the token stays in runner files the agent could
+    # read. An agent without bash cannot use it, so it is dead before the agent starts.
+    - name: Revoke the read-only token
+      if: ${{ always() && steps.read-token.outputs.token != '' && !contains(inputs.tools, 'bash') }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.read-token.outputs.token }}
+      run: gh api -X DELETE installation/token --silent
+
+    # actions/checkout persists its token in git config (or a file that config includes) unless
+    # persist-credentials is false; read-only tools could read it.
+    - name: Check the checkout holds no credentials
+      if: ${{ steps.gate.outputs.run == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        if git config --includes --get-regexp '^http\..*extraheader$' >/dev/null 2>&1; then
+          echo "::error title=pi-pr-review::The checkout persisted its GitHub token, which the agent could read. Check out with persist-credentials: false."
+          exit 1
+        fi
 
     - name: Install pi
       if: ${{ steps.gate.outputs.run == 'true' }}
@@ -235,9 +301,12 @@ runs:
       if: ${{ steps.gate.outputs.run == 'true' }}
       shell: bash
       env:
+        # The prompt carries everything the skill needs, so the agent has no reason to read its
+        # environment, which holds the gateway key.
         PI_ACTION_PROMPT: >-
           Review pull request #${{ inputs.pr-number }} in ${{ inputs.repository }} following the
-          pr-review skill, and end with your verdict message.
+          pr-review skill, and end with your verdict message. The prefetched context directory is
+          ${{ steps.gate.outputs.in }}. Review mode: ${{ inputs.mode }}.
         PI_ACTION_PROMPT_FILE: ''
         PI_ACTION_SKILL: ${{ github.action_path }}/skill
         PI_ACTION_APPEND_SYSTEM_PROMPT: ''
@@ -252,17 +321,28 @@ runs:
         PI_ACTION_CPA_API_KEY: ${{ inputs.cliproxyapi-api-key }}
         PI_ACTION_CPA_BASE_URL: ${{ inputs.cliproxyapi-base-url }}
         PI_ACTION_EXTENSION_DIR: ${{ runner.temp }}/pi-ext
-        # Read-only App token when there is an App; otherwise no GitHub credential at all.
-        PI_ACTION_GH_TOKEN: ${{ steps.read-token.outputs.token }}
+        # Only an agent with bash can use gh; read-only tools get no GitHub credential at all.
+        PI_ACTION_GH_TOKEN: ${{ contains(inputs.tools, 'bash') && steps.read-token.outputs.token || '' }}
         PI_ACTION_BOT_LOGIN: ''
         PI_ACTION_BOT_EMAIL: ''
         GH_TOKEN: ''
         GITHUB_TOKEN: ''
-        PI_REPO: ${{ inputs.repository }}
-        PI_PR: ${{ inputs.pr-number }}
-        PI_IN: ${{ steps.gate.outputs.in }}
-        PI_REVIEW_MODE: ${{ inputs.mode }}
+      working-directory: ${{ inputs.working-directory }}
       run: node "${{ github.action_path }}/../runner.mjs"
+
+    - name: Mint App write token
+      id: app-token
+      if: >-
+        ${{ inputs.app-client-id != '' && inputs.dry-run != 'true' && steps.gate.outputs.run == 'true' &&
+        steps.pi.outcome == 'success' && steps.pi.outputs.rate-limited != 'true' }}
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ steps.inputs.outputs.owner }}
+        repositories: ${{ steps.inputs.outputs.name }}
+        permission-contents: read
+        permission-pull-requests: write
 
     - name: Post review
       id: apply
@@ -278,6 +358,8 @@ runs:
           ${{ inputs.cliproxyapi-api-key }}
           ${{ steps.read-token.outputs.token }}
         PI_HEAD_SHA: ${{ steps.gate.outputs.head-sha }}
+        PI_BASE_REF: ${{ steps.gate.outputs.base-ref }}
+        PI_PARTIAL_DIFF: ${{ steps.gate.outputs.partial-diff }}
         PI_REVIEW_MODE: ${{ inputs.mode }}
         PI_DRY_RUN: ${{ inputs.dry-run }}
         PI_MODEL_USED: ${{ steps.pi.outputs.model-used }}
