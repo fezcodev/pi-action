@@ -30,15 +30,17 @@ inputs:
   head-sha:
     description: >-
       Head commit the checkout was made from. The review is skipped when the PR's live head differs,
-      so the files on disk always match the diff being reviewed. Empty reviews the live head.
+      so the files on disk always match the diff being reviewed. Empty uses the triggering PR's head
+      when reviewing that PR, and skips the check for any other.
     required: false
-    default: ${{ github.event.pull_request.head.sha }}
+    default: ''
   base-ref:
     description: >-
       Base branch the checkout was merged against. The review is skipped when the PR has since been
-      retargeted. Empty skips the check.
+      retargeted. Empty uses the triggering PR's base when reviewing that PR, and skips the check for
+      any other.
     required: false
-    default: ${{ github.event.pull_request.base.ref }}
+    default: ''
   repository:
     description: 'owner/name of the pull request''s repository. The checkout in the working directory must be this repository.'
     required: false
@@ -151,7 +153,6 @@ runs:
       env:
         PI_REPO: ${{ inputs.repository }}
         MODE: ${{ inputs.mode }}
-        TOOLS: ${{ inputs.tools }}
         APP_ID: ${{ inputs.app-client-id }}
         APP_KEY: ${{ inputs.app-private-key }}
       run: |
@@ -160,8 +161,6 @@ runs:
         if [ -n "$APP_ID" ] && [ -z "$APP_KEY" ]; then
           echo "::error title=pi-pr-review::app-private-key is required with app-client-id."; exit 1
         fi
-        # An empty list would make pi fall back to its default tools, write and bash included.
-        [ -n "${TOOLS//[[:space:],]/}" ] || { echo "::error title=pi-pr-review::tools must not be empty."; exit 1; }
         [[ "$PI_REPO" == */* ]] || { echo "::error title=pi-pr-review::repository must be owner/name, got '${PI_REPO}'."; exit 1; }
         { echo "owner=${PI_REPO%%/*}"; echo "name=${PI_REPO#*/}"; } >> "$GITHUB_OUTPUT"
 
@@ -169,6 +168,16 @@ runs:
       uses: actions/setup-node@v4
       with:
         node-version: '22'
+
+    # An empty list would make pi fall back to its default tools, write and bash included. Same
+    # trimming as the runner, so no blank value slips past one and not the other.
+    - name: Check tools
+      shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+      run: |
+        node -e 'if (!process.env.TOOLS.split(",").some((t) => t.trim())) process.exit(1)' \
+          || { echo "::error title=pi-pr-review::tools must name at least one tool."; exit 1; }
 
     # The write token is minted only after the agent exits (see "Mint App write token"):
     # read-only tools are no filesystem sandbox, and a token minted earlier sits in
@@ -202,17 +211,17 @@ runs:
         PI_EVENT_BASE: ${{ github.event.pull_request.base.ref }}
       run: |
         set -euo pipefail
-        # head-sha and base-ref default to the triggering PR's; they say nothing about another PR.
-        if [ "$PI_PR" != "$PI_EVENT_PR" ]; then
-          [ "$PI_EXPECTED_SHA" != "$PI_EVENT_SHA" ] || PI_EXPECTED_SHA=""
-          [ "$PI_EXPECTED_BASE" != "$PI_EVENT_BASE" ] || PI_EXPECTED_BASE=""
+        # Unset expectations come from the triggering PR, and only when it is the one under review.
+        if [ "$PI_REPO" = "$GITHUB_REPOSITORY" ] && [ "$PI_PR" = "$PI_EVENT_PR" ]; then
+          PI_EXPECTED_SHA="${PI_EXPECTED_SHA:-$PI_EVENT_SHA}"
+          PI_EXPECTED_BASE="${PI_EXPECTED_BASE:-$PI_EVENT_BASE}"
         fi
         [[ "$PI_PR" =~ ^[0-9]+$ ]] || { echo "::error title=pi-pr-review::pr-number must be a number, got '${PI_PR}'."; exit 1; }
         work="${RUNNER_TEMP}/pi-pr-review"
         rm -rf "$work" && mkdir -p "$work/in"
         gh api "repos/${PI_REPO}/pulls/${PI_PR}" --jq '{number, title, body, state, draft,
           author: .user.login, author_type: .user.type, base: .base.ref, head: .head.ref,
-          head_sha: .head.sha, additions, deletions, changed_files}' > "$work/in/pr.json"
+          head_sha: .head.sha, base_sha: .base.sha, additions, deletions, changed_files}' > "$work/in/pr.json"
         IFS=$'\t' read -r state type login sha < <(jq -r '[.state, .author_type, .author, .head_sha] | @tsv' "$work/in/pr.json")
         run=true
         partial=false
@@ -240,6 +249,11 @@ runs:
             --jq '.[] | {author: .user.login, state, submitted_at, commit_id, body}' | jq -s . > "$work/in/reviews.json"
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/comments?per_page=100" \
             --jq '.[] | {author: .user.login, path, line, body, created_at}' | jq -s . > "$work/in/review-comments.json"
+          # Repo guidance comes from the base branch: a PR must not rewrite the rules it is reviewed by.
+          base_sha="$(jq -r .base_sha "$work/in/pr.json")"
+          gh api "repos/${PI_REPO}/contents/.github/pi/review.md?ref=${base_sha}" \
+            -H 'Accept: application/vnd.github.raw' > "$work/in/review-guidance.md" 2>/dev/null \
+            || rm -f "$work/in/review-guidance.md"
         fi
         {
           echo "run=${run}"
