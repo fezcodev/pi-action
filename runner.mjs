@@ -234,6 +234,17 @@ const agentDir = path.join(runnerTemp, "pi-action-agent");
 mkdirSync(agentDir, { recursive: true });
 childEnv.PI_CODING_AGENT_DIR = agentDir;
 
+const messageThreadsInput = (input("PI_ACTION_MESSAGE_THREADS") || "false").toLowerCase();
+if (!["true", "false"].includes(messageThreadsInput)) {
+  fail("`message-threads` must be either `true` or `false`.");
+}
+const messageThreads = messageThreadsInput === "true";
+// The provider extension reads its settings from the agent dir's settings.json.
+writeFileSync(
+  path.join(agentDir, "settings.json"),
+  `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads } }, null, 2)}\n`,
+);
+
 // ---------------------------------------------------------------------------
 // Build the pi invocation
 // ---------------------------------------------------------------------------
@@ -479,7 +490,8 @@ summary("### Pi agent run");
 summary("");
 summary(
   `| | |\n|---|---|\n| Model | \`${final.model}\` |\n| Gateway | ${gatewayHost} |\n| Identity | ${identity} |\n` +
-    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |`,
+    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |\n` +
+    `| Claude message threads | ${messageThreads ? "on" : "off"} |`,
 );
 if (attempts.length > 1 || unlistedModels.length > 0) {
   summary("");

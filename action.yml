@@ -45,6 +45,12 @@ inputs:
     description: 'Thinking level: off, minimal, low, medium, high, xhigh, max. Empty uses the model default.'
     required: false
     default: ''
+  message-threads:
+    description: >-
+      `true` sends Claude turns as Anthropic message threads: after the first request, each turn
+      sends only the new messages. Needs CLIProxyAPI v8.0.76 or later.
+    required: false
+    default: 'false'
   tools:
     description: >-
       Comma-separated allowlist of tool names (read, bash, edit, write, ...).
@@ -118,11 +124,11 @@ inputs:
   pi-version:
     description: 'Pinned @earendil-works/pi-coding-agent version.'
     required: false
-    default: '1.1.0'
+    default: '1.5.2'
   provider-extension-version:
     description: 'Pinned @hank-warren/pi-cliproxyapi-provider version.'
     required: false
-    default: '0.4.0'
+    default: '0.6.0'
   upload-transcript:
     description: 'Upload the full JSONL session transcript as a workflow artifact.'
     required: false
@@ -214,6 +220,7 @@ runs:
         PI_ACTION_MODEL: ${{ inputs.model }}
         PI_ACTION_FALLBACK_MODELS: ${{ inputs.fallback-models }}
         PI_ACTION_THINKING: ${{ inputs.thinking }}
+        PI_ACTION_MESSAGE_THREADS: ${{ inputs.message-threads }}
         PI_ACTION_TOOLS: ${{ inputs.tools }}
         PI_ACTION_MAX_TURNS: ${{ inputs.max-turns }}
         PI_ACTION_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}

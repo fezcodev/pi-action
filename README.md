@@ -48,8 +48,9 @@ newest stays expanded. See [`examples/workflows/pi-review.yml`](examples/workflo
     cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
 ```
 
-- **Models:** `cpa/gpt-6.1-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
-  unavailable model, with `thinking: high`. Out of quota on both posts nothing and exits 0.
+- **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/gpt-6.1-sol` then `cpa/claude-opus-5-5` on
+  quota exhaustion or an unavailable model, with `thinking: high`. Out of quota on all of them posts
+  nothing and exits 0.
 - **The agent never writes to GitHub, or to disk.** The action prefetches the PR's metadata, diff and
   earlier reviews into files; the agent reads those and the checkout with read-only tools
   (`read,grep,find,ls`) and answers with a verdict plus a review body. A deterministic step posts
@@ -145,6 +146,7 @@ the runner writes.
 | `model` | `cpa/claude-opus-5-5` | Gateway model, `cpa/<id>`. |
 | `fallback-models` | — | Ordered fallback models, comma- or newline-separated. See [Model fallback](#model-fallback). |
 | `thinking` | — | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
+| `message-threads` | `false` | `true` sends Claude turns as Anthropic message threads (only new messages per request). Needs CLIProxyAPI v8.0.76+. |
 | `tools` | — | Comma-separated tool allowlist. Empty means Pi's default toolset. |
 | `max-turns` | `25` | Assistant turn cap. Exceeding it **fails the step**. |
 | `timeout-minutes` | `20` | Wall-clock limit. |
@@ -158,8 +160,8 @@ the runner writes.
 | `app-permission-pull-requests` | `write` | Pull requests permission of the minted App token. Empty omits it. |
 | `github-token` | — | Explicit `GH_TOKEN` for the agent. Mutually exclusive with `app-client-id`. |
 | `working-directory` | `.` | Directory the agent runs in. |
-| `pi-version` | `1.1.0` | Pinned Pi version. |
-| `provider-extension-version` | `0.4.0` | Pinned `@hank-warren/pi-cliproxyapi-provider` version. |
+| `pi-version` | `1.5.2` | Pinned Pi version. |
+| `provider-extension-version` | `0.6.0` | Pinned `@hank-warren/pi-cliproxyapi-provider` version. |
 | `upload-transcript` | `true` | Upload the JSONL transcript as an artifact. |
 | `transcript-name` | `pi-session` | Artifact name. |
 
