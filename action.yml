@@ -109,6 +109,12 @@ inputs:
     description: 'Pull requests permission for the minted App token (read, write, or empty to omit).'
     required: false
     default: 'write'
+  app-repositories:
+    description: >-
+      Repositories the minted App token may access, comma- or newline-separated names within the
+      owner. Empty keeps every repository the App is installed on.
+    required: false
+    default: ''
   github-token:
     description: >-
       Explicit GitHub token for the agent (GH_TOKEN), e.g. secrets.GITHUB_TOKEN or a PAT.
@@ -184,6 +190,7 @@ runs:
         permission-contents: ${{ inputs.app-permission-contents }}
         permission-issues: ${{ inputs.app-permission-issues }}
         permission-pull-requests: ${{ inputs.app-permission-pull-requests }}
+        repositories: ${{ inputs.app-repositories }}
 
     # Git attribution for any commits the agent makes, like claude-code-action's
     # bot_id/bot_name: <id>+<slug>[bot]@users.noreply.github.com links to the App.

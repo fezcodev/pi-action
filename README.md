@@ -145,7 +145,7 @@ the runner writes.
 | `model` | `cpa/claude-opus-5-5` | Gateway model, `cpa/<id>`. |
 | `fallback-models` | — | Ordered fallback models, comma- or newline-separated. See [Model fallback](#model-fallback). |
 | `thinking` | — | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
-| `message-threads` | `false` | `true` sends Claude turns as Anthropic message threads (only new messages per request). Needs CLIProxyAPI v8.0.76+. |
+| `message-threads` | `false` | `true` sends Claude turns as Anthropic message threads (only new messages per request). Needs CLIProxyAPI v8.0.76+. Needs `pi-cliproxyapi-provider` 0.6.0+. A checkout's `.pi/settings.json` `pi-cliproxyapi-provider.messageThreads` overrides it. If the provider rejects its settings, the step fails with its reason. |
 | `tools` | — | Comma-separated tool allowlist. Empty means Pi's default toolset. |
 | `max-turns` | `25` | Assistant turn cap. Exceeding it **fails the step**. |
 | `timeout-minutes` | `20` | Wall-clock limit. |
@@ -157,6 +157,7 @@ the runner writes.
 | `app-permission-contents` | `read` | Contents permission of the minted App token. Empty omits it. |
 | `app-permission-issues` | `read` | Issues permission of the minted App token. Empty omits it. |
 | `app-permission-pull-requests` | `write` | Pull requests permission of the minted App token. Empty omits it. |
+| `app-repositories` | — | Repositories the minted App token may access (names within the owner, comma- or newline-separated). Empty keeps every repository the App is installed on. |
 | `github-token` | — | Explicit `GH_TOKEN` for the agent. Mutually exclusive with `app-client-id`. |
 | `working-directory` | `.` | Directory the agent runs in. |
 | `pi-version` | `1.5.2` | Pinned Pi version. |

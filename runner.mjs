@@ -9,14 +9,16 @@
  * Node builtins plus the GITHUB_OUTPUT / GITHUB_STEP_SUMMARY file protocols.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
 
-import { parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
+import { inferOwner, parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
+import { projectMessageThreads, providerStartupFailure, supportsMessageThreads } from "./lib/settings.mjs";
 
 // The extension registers models under this provider name: `cpa/<model-id>`.
 const PROVIDER_NAME = "cpa";
@@ -248,36 +250,6 @@ const agentDir = path.join(runnerTemp, "pi-action-agent");
 mkdirSync(agentDir, { recursive: true });
 childEnv.PI_CODING_AGENT_DIR = agentDir;
 
-const messageThreadsInput = (input("PI_ACTION_MESSAGE_THREADS") || "false").toLowerCase();
-if (!["true", "false"].includes(messageThreadsInput)) {
-  fail("`message-threads` must be either `true` or `false`.");
-}
-// The provider extension reads its settings from the agent dir's settings.json, then lets the
-// checkout's .pi/settings.json override them whether or not pi trusts the project.
-writeFileSync(
-  path.join(agentDir, "settings.json"),
-  `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads: messageThreadsInput === "true" } }, null, 2)}\n`,
-);
-let messageThreads = messageThreadsInput === "true";
-let messageThreadsSource = "input";
-const projectSettingsPath = path.join(process.cwd(), ".pi", "settings.json");
-if (existsSync(projectSettingsPath)) {
-  let projectThreads;
-  try {
-    projectThreads = JSON.parse(readFileSync(projectSettingsPath, "utf8"))?.["pi-cliproxyapi-provider"]?.messageThreads;
-  } catch {
-    projectThreads = undefined;
-  }
-  if (typeof projectThreads === "boolean" && projectThreads !== messageThreads) {
-    warn(
-      `.pi/settings.json sets pi-cliproxyapi-provider.messageThreads to ${projectThreads}, which overrides ` +
-        `\`message-threads: ${messageThreadsInput}\` for the provider extension.`,
-    );
-    messageThreads = projectThreads;
-    messageThreadsSource = ".pi/settings.json";
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Build the pi invocation
 // ---------------------------------------------------------------------------
@@ -292,6 +264,56 @@ const extensionEntry = path.join(
 );
 if (!existsSync(extensionEntry)) {
   fail(`Provider extension entry not found at ${extensionEntry}. The install step did not complete.`);
+}
+let providerVersion;
+try {
+  providerVersion = JSON.parse(readFileSync(path.join(path.dirname(extensionEntry), "package.json"), "utf8")).version;
+} catch {
+  providerVersion = undefined;
+}
+
+const messageThreadsInput = (input("PI_ACTION_MESSAGE_THREADS") || "false").toLowerCase();
+if (!["true", "false"].includes(messageThreadsInput)) {
+  fail("`message-threads` must be either `true` or `false`.");
+}
+const providerHasThreads = supportsMessageThreads(providerVersion);
+if (messageThreadsInput === "true" && !providerHasThreads) {
+  warn(`\`message-threads: true\` needs pi-cliproxyapi-provider 0.6.0 or later (installed: ${providerVersion}); ignored.`);
+}
+// The provider extension reads its settings from the agent dir's settings.json, then lets the
+// checkout's .pi/settings.json override them whether or not pi trusts the project.
+writeFileSync(
+  path.join(agentDir, "settings.json"),
+  `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads: messageThreadsInput === "true" } }, null, 2)}\n`,
+);
+let messageThreads = providerHasThreads && messageThreadsInput === "true";
+let messageThreadsSource = "input";
+if (providerHasThreads) {
+  // Read with the globally installed pi's own SettingsManager (lib/install-pi.sh), the loader the
+  // provider uses, so the summary reports the value the provider actually sees.
+  let projectSettings;
+  try {
+    const piRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    const piEntry = path.join(piRoot, "@earendil-works", "pi-coding-agent", "dist", "index.js");
+    const { SettingsManager } = await import(pathToFileURL(piEntry).href);
+    projectSettings = SettingsManager.create(process.cwd(), agentDir).getProjectSettings();
+  } catch (error) {
+    if (existsSync(path.join(process.cwd(), ".pi", "settings.json"))) {
+      warn(
+        `Could not read .pi/settings.json through pi (${error instanceof Error ? error.message : String(error)}); ` +
+          "the summary's message-threads value may not reflect it.",
+      );
+    }
+  }
+  const projectThreads = projectMessageThreads(projectSettings);
+  if (projectThreads !== undefined && projectThreads !== messageThreads) {
+    warn(
+      `.pi/settings.json sets pi-cliproxyapi-provider.messageThreads to ${projectThreads}, which overrides ` +
+        `\`message-threads: ${messageThreadsInput}\` for the provider extension.`,
+    );
+    messageThreads = projectThreads;
+    messageThreadsSource = ".pi/settings.json";
+  }
 }
 
 const maxTurns = Number.parseInt(input("PI_ACTION_MAX_TURNS") || "25", 10);
@@ -341,6 +363,44 @@ for (const skill of input("PI_ACTION_SKILL").split("\n").map((s) => s.trim()).fi
 const appendSystemPrompt = input("PI_ACTION_APPEND_SYSTEM_PROMPT");
 if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
 
+// `timeout-minutes` is one budget for the whole step: provider preflights and every attempt.
+const deadline = Date.now() + timeoutMinutes * 60 * 1000;
+
+// Load the provider without a prompt before each attempt. If it cannot start, it registers
+// placeholder models, possibly at its default localhost URL with the gateway key, before saying so
+// on stderr, so a prompted run could send a request before the runner reacts.
+// `--list-models --offline` loads the extension exactly as the run will (same flags, env and cwd)
+// and never sends a prompt. Re-run before every attempt, since an attempt with write or bash tools
+// can change the checkout's .pi/ files. Fails closed: a preflight that cannot finish ends the step.
+function preflightProvider() {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) fail(`Agent exceeded the ${timeoutMinutes} minute timeout.`);
+  const preflight = spawnSync(
+    "pi",
+    ["--offline", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-mcp",
+      "--extension", extensionEntry, "--list-models", `${PROVIDER_NAME}/`],
+    { env: childEnv, encoding: "utf8", timeout: Math.min(120_000, remaining) },
+  );
+  const reason = String(preflight.stderr ?? "")
+    .split("\n")
+    .map((line) => providerStartupFailure(redact(line)))
+    .find((found) => found !== undefined);
+  if (reason !== undefined) {
+    fail(
+      `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${reason.slice(0, 500)}. ` +
+        "No request was sent. Check the provider's settings and config files in the checkout (.pi/).",
+    );
+  }
+  if (Date.now() >= deadline) fail(`Agent exceeded the ${timeoutMinutes} minute timeout.`);
+  if (preflight.error || preflight.status !== 0) {
+    const stderrTail = redact(String(preflight.stderr ?? "")).trim().split("\n").slice(-5).join(" ").slice(0, 400);
+    fail(
+      `Provider preflight (pi --list-models) did not complete: ${preflight.error?.message ?? `exit ${preflight.status}`}. ` +
+        `No request was sent. ${stderrTail}`,
+    );
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Run, falling back through the model chain
@@ -357,7 +417,6 @@ const MODEL_UNAVAILABLE_PATTERN = /model_not_found|unknown provider for model|au
 const transcriptPath = path.join(runnerTemp, "pi-session.jsonl");
 const transcript = createWriteStream(transcriptPath, { flags: "w" });
 setOutput("transcript", transcriptPath);
-const deadline = Date.now() + timeoutMinutes * 60 * 1000;
 
 function extractText(message) {
   if (!message) return "";
@@ -396,6 +455,9 @@ function runAttempt(model, attempt) {
     let finalError = "";
     const toolCalls = [];
     const stderrChunks = [];
+    // Set when the provider extension fell back to placeholder models (invalid settings, bad
+    // config). pi then runs the model as an unknown custom id, bypassing the provider's routing.
+    let providerFailure;
 
     const timer = setTimeout(
       () => {
@@ -456,10 +518,15 @@ function runAttempt(model, attempt) {
       if (event) handleEvent(event);
     });
 
-    child.stderr.on("data", (chunk) => {
-      const text = redact(chunk.toString());
+    // Whole lines, so a credential split across two chunks is still redacted before it is logged.
+    readline.createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (raw) => {
+      const text = `${redact(raw)}\n`;
       stderrChunks.push(text);
       process.stderr.write(text);
+      if (providerFailure === undefined) {
+        providerFailure = providerStartupFailure(text);
+        if (providerFailure !== undefined) child.kill("SIGKILL");
+      }
     });
 
     child.on("error", (error) => {
@@ -487,8 +554,9 @@ function runAttempt(model, attempt) {
         timedOut,
         capExceeded,
         stderrTail: stderrText.trim().split("\n").slice(-20).join("\n"),
-        quotaExhausted,
-        modelUnavailable: !quotaExhausted && endedOn(MODEL_UNAVAILABLE_PATTERN),
+        providerFailure,
+        quotaExhausted: providerFailure === undefined && quotaExhausted,
+        modelUnavailable: providerFailure === undefined && !quotaExhausted && endedOn(MODEL_UNAVAILABLE_PATTERN),
       });
     });
   });
@@ -501,6 +569,7 @@ for (const [index, model] of modelChain.entries()) {
       (modelChain.length > 1 ? ` attempt=${index + 1}/${modelChain.length}` : "") +
       "\n",
   );
+  preflightProvider();
   const result = await runAttempt(model, index + 1);
   attempts.push(result);
   const next = modelChain[index + 1];
@@ -523,9 +592,12 @@ summary("### Pi agent run");
 summary("");
 summary(
   `| | |\n|---|---|\n| Model | \`${final.model}\` |\n| Gateway | ${gatewayHost} |\n| Identity | ${identity} |\n` +
-    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |\n` +
-    `| Claude message threads | ${messageThreads ? "on" : "off"}` +
-    `${messageThreadsSource === "input" ? "" : ` (from ${messageThreadsSource})`} |`,
+    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |` +
+    // Threads apply only to Claude models; omit the row when another model answered.
+    (inferOwner(modelIdOf(final.model)) === "anthropic"
+      ? `\n| Claude message threads | ${messageThreads ? "on" : "off"}` +
+        `${messageThreadsSource === "input" ? "" : ` (from ${messageThreadsSource})`} |`
+      : ""),
 );
 if (attempts.length > 1 || unlistedModels.length > 0) {
   summary("");
@@ -535,6 +607,8 @@ if (attempts.length > 1 || unlistedModels.length > 0) {
     const result = attempts.find((attempt) => attempt.model === model);
     const outcome = !result
       ? "not tried"
+      : result.providerFailure !== undefined
+        ? "provider extension failed to start"
       : result.quotaExhausted
         ? "quota exhausted"
         : result.modelUnavailable
@@ -554,6 +628,13 @@ if (final.finalText) {
 }
 
 const chainNote = modelChain.length > 1 ? ` (model chain: ${modelChain.join(", ")})` : "";
+// Every model would hit the same failure, so the chain stops at the first attempt.
+if (final.providerFailure !== undefined) {
+  fail(
+    `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${final.providerFailure.slice(0, 500)}. ` +
+      "No gateway model is usable; check the provider's settings and config files in the checkout (.pi/).",
+  );
+}
 // Quota first: a run killed by the timeout while pi waited out a quota retry is
 // out of quota, not hung.
 if (final.quotaExhausted) {
