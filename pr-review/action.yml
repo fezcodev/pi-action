@@ -145,6 +145,7 @@ runs:
       env:
         PI_REPO: ${{ inputs.repository }}
         MODE: ${{ inputs.mode }}
+        TOOLS: ${{ inputs.tools }}
         APP_ID: ${{ inputs.app-client-id }}
         APP_KEY: ${{ inputs.app-private-key }}
       run: |
@@ -153,6 +154,8 @@ runs:
         if [ -n "$APP_ID" ] && [ -z "$APP_KEY" ]; then
           echo "::error title=pi-pr-review::app-private-key is required with app-client-id."; exit 1
         fi
+        # An empty list would make pi fall back to its default tools, write and bash included.
+        [ -n "${TOOLS//[[:space:],]/}" ] || { echo "::error title=pi-pr-review::tools must not be empty."; exit 1; }
         [[ "$PI_REPO" == */* ]] || { echo "::error title=pi-pr-review::repository must be owner/name, got '${PI_REPO}'."; exit 1; }
         { echo "owner=${PI_REPO%%/*}"; echo "name=${PI_REPO#*/}"; } >> "$GITHUB_OUTPUT"
 
@@ -173,6 +176,8 @@ runs:
         private-key: ${{ inputs.app-private-key }}
         owner: ${{ steps.inputs.outputs.owner }}
         repositories: ${{ steps.inputs.outputs.name }}
+        # Revoked before the agent starts unless the agent gets it (bash).
+        skip-token-revoke: ${{ !contains(inputs.tools, 'bash') }}
         permission-contents: read
         permission-issues: read
         permission-pull-requests: read
@@ -195,6 +200,7 @@ runs:
           head_sha: .head.sha, additions, deletions, changed_files}' > "$work/in/pr.json"
         IFS=$'\t' read -r state type login sha < <(jq -r '[.state, .author_type, .author, .head_sha] | @tsv' "$work/in/pr.json")
         run=true
+        partial=false
         if [ "$state" != "open" ]; then
           run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: it is ${state}."
         elif [ "$type" != "User" ]; then
@@ -208,6 +214,7 @@ runs:
             | jq -s . > "$work/in/files.json"
           # The diff endpoint refuses very large PRs; fall back to the per-file patches.
           if ! gh api "repos/${PI_REPO}/pulls/${PI_PR}" -H 'Accept: application/vnd.github.diff' > "$work/in/diff.patch" 2>/dev/null; then
+            partial=true
             echo "::warning title=pi-pr-review::Full diff unavailable; using per-file patches (very large files may be missing)."
             jq -r '.[] | "--- \(.previous_filename // .filename)\n+++ \(.filename)\n\(.patch // "(no textual patch: binary or too large)")\n"' \
               "$work/in/files.json" > "$work/in/diff.patch"
@@ -220,8 +227,19 @@ runs:
         {
           echo "run=${run}"
           echo "head-sha=${sha}"
+          echo "base-ref=$(jq -r .base "$work/in/pr.json")"
+          echo "partial-diff=${partial}"
           echo "in=${work}/in"
         } >> "$GITHUB_OUTPUT"
+
+    # Read-only tools are no filesystem sandbox: the token stays in runner files the agent could
+    # read. An agent without bash cannot use it, so it is dead before the agent starts.
+    - name: Revoke the read-only token
+      if: ${{ steps.read-token.outputs.token != '' && !contains(inputs.tools, 'bash') }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.read-token.outputs.token }}
+      run: gh api -X DELETE installation/token --silent
 
     - name: Install pi
       if: ${{ steps.gate.outputs.run == 'true' }}
@@ -293,6 +311,8 @@ runs:
           ${{ inputs.cliproxyapi-api-key }}
           ${{ steps.read-token.outputs.token }}
         PI_HEAD_SHA: ${{ steps.gate.outputs.head-sha }}
+        PI_BASE_REF: ${{ steps.gate.outputs.base-ref }}
+        PI_PARTIAL_DIFF: ${{ steps.gate.outputs.partial-diff }}
         PI_REVIEW_MODE: ${{ inputs.mode }}
         PI_DRY_RUN: ${{ inputs.dry-run }}
         PI_MODEL_USED: ${{ steps.pi.outputs.model-used }}
