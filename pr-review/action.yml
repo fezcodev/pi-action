@@ -215,6 +215,9 @@ runs:
         if [ "$PI_REPO" = "$GITHUB_REPOSITORY" ] && [ "$PI_PR" = "$PI_EVENT_PR" ]; then
           PI_EXPECTED_SHA="${PI_EXPECTED_SHA:-$PI_EVENT_SHA}"
           PI_EXPECTED_BASE="${PI_EXPECTED_BASE:-$PI_EVENT_BASE}"
+        elif [ -n "$PI_EVENT_PR" ] && [ -z "$PI_EXPECTED_SHA" ]; then
+          # The default checkout is the triggering PR; without head-sha nothing ties it to this one.
+          echo "::error title=pi-pr-review::Reviewing #${PI_PR} from a pull_request run for #${PI_EVENT_PR} needs head-sha for the checkout you made."; exit 1
         fi
         [[ "$PI_PR" =~ ^[0-9]+$ ]] || { echo "::error title=pi-pr-review::pr-number must be a number, got '${PI_PR}'."; exit 1; }
         work="${RUNNER_TEMP}/pi-pr-review"

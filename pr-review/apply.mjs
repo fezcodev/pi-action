@@ -114,7 +114,10 @@ try {
 
   const mutation = `mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }`;
   // An incomplete review must not hide earlier findings it could not re-check.
-  const old = partialDiff ? [] : supersededReviews(nodes, keepId);
+  // A change request still in force stays expanded unless this review approves.
+  const old = partialDiff
+    ? []
+    : supersededReviews(nodes, keepId).filter((node) => event === "APPROVE" || node.state !== "CHANGES_REQUESTED");
   for (const node of old) run("gh", ["api", "graphql", "-f", `id=${node.id}`, "-f", `query=${mutation}`]);
   if (old.length) summary(`Collapsed ${old.length} superseded review(s).`);
 } catch (error) {
