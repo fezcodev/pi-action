@@ -363,31 +363,42 @@ for (const skill of input("PI_ACTION_SKILL").split("\n").map((s) => s.trim()).fi
 const appendSystemPrompt = input("PI_ACTION_APPEND_SYSTEM_PROMPT");
 if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
 
-// Load the provider once without a prompt. If it cannot start, it registers placeholder models,
-// possibly at its default localhost URL with the gateway key, before saying so on stderr, so a
-// prompted run could send a request before the runner reacts. `--list-models --offline` loads the
-// extension exactly as the run will (same flags, env and cwd) and never sends a prompt.
-const preflight = spawnSync(
-  "pi",
-  ["--offline", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-mcp",
-    "--extension", extensionEntry, "--list-models", `${PROVIDER_NAME}/`],
-  { env: childEnv, encoding: "utf8", timeout: 120_000 },
-);
-const preflightFailure = String(preflight.stderr ?? "")
-  .split("\n")
-  .map((line) => providerStartupFailure(redact(line)))
-  .find((reason) => reason !== undefined);
-if (preflightFailure !== undefined) {
-  fail(
-    `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${preflightFailure.slice(0, 500)}. ` +
-      "No request was sent. Check the provider's settings and config files in the checkout (.pi/).",
+// `timeout-minutes` is one budget for the whole step: provider preflights and every attempt.
+const deadline = Date.now() + timeoutMinutes * 60 * 1000;
+
+// Load the provider without a prompt before each attempt. If it cannot start, it registers
+// placeholder models, possibly at its default localhost URL with the gateway key, before saying so
+// on stderr, so a prompted run could send a request before the runner reacts.
+// `--list-models --offline` loads the extension exactly as the run will (same flags, env and cwd)
+// and never sends a prompt. Re-run before every attempt, since an attempt with write or bash tools
+// can change the checkout's .pi/ files. Fails closed: a preflight that cannot finish ends the step.
+function preflightProvider() {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) fail(`Agent exceeded the ${timeoutMinutes} minute timeout.`);
+  const preflight = spawnSync(
+    "pi",
+    ["--offline", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-mcp",
+      "--extension", extensionEntry, "--list-models", `${PROVIDER_NAME}/`],
+    { env: childEnv, encoding: "utf8", timeout: Math.min(120_000, remaining) },
   );
-}
-if (preflight.error || preflight.status !== 0) {
-  warn(
-    `Provider preflight did not complete (${preflight.error?.message ?? `exit ${preflight.status}`}); ` +
-      "a provider startup failure will be caught when the run starts.",
-  );
+  const reason = String(preflight.stderr ?? "")
+    .split("\n")
+    .map((line) => providerStartupFailure(redact(line)))
+    .find((found) => found !== undefined);
+  if (reason !== undefined) {
+    fail(
+      `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${reason.slice(0, 500)}. ` +
+        "No request was sent. Check the provider's settings and config files in the checkout (.pi/).",
+    );
+  }
+  if (Date.now() >= deadline) fail(`Agent exceeded the ${timeoutMinutes} minute timeout.`);
+  if (preflight.error || preflight.status !== 0) {
+    const stderrTail = redact(String(preflight.stderr ?? "")).trim().split("\n").slice(-5).join(" ").slice(0, 400);
+    fail(
+      `Provider preflight (pi --list-models) did not complete: ${preflight.error?.message ?? `exit ${preflight.status}`}. ` +
+        `No request was sent. ${stderrTail}`,
+    );
+  }
 }
 
 
@@ -406,7 +417,6 @@ const MODEL_UNAVAILABLE_PATTERN = /model_not_found|unknown provider for model|au
 const transcriptPath = path.join(runnerTemp, "pi-session.jsonl");
 const transcript = createWriteStream(transcriptPath, { flags: "w" });
 setOutput("transcript", transcriptPath);
-const deadline = Date.now() + timeoutMinutes * 60 * 1000;
 
 function extractText(message) {
   if (!message) return "";
@@ -559,6 +569,7 @@ for (const [index, model] of modelChain.entries()) {
       (modelChain.length > 1 ? ` attempt=${index + 1}/${modelChain.length}` : "") +
       "\n",
   );
+  preflightProvider();
   const result = await runAttempt(model, index + 1);
   attempts.push(result);
   const next = modelChain[index + 1];

@@ -15,7 +15,11 @@ on:
         type: boolean
         default: false
       use-app:
-        description: 'Mint the pi GitHub App token and assert the bot identity'
+        description: 'Mint the pi GitHub App token, assert the bot identity, and have the agent use it with gh'
+        type: boolean
+        default: false
+      use-github-token:
+        description: 'Pass GITHUB_TOKEN as github-token and have the agent use it with gh (not with use-app)'
         type: boolean
         default: false
 
@@ -28,6 +32,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # With a token for the agent, the task needs it: a gh call only a working token answers.
+      - name: Choose the task
+        id: task
+        env:
+          WITH_TOKEN: ${{ inputs.use-app || inputs.use-github-token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$WITH_TOKEN" = "true" ]; then
+            prompt="Using bash, run exactly: gh api repos/${REPO} --jq .full_name
+          Then reply with exactly one line: its output, with no other text and no code fences."
+            tools="read,bash"
+            expected="$REPO"
+          else
+            prompt='Read README.md in the current directory and reply with exactly one line:
+          the value of the `pi-version` default listed in the Inputs table,
+          with no other text, no punctuation, and no code fences.'
+            tools="read"
+            expected="$(grep -oP '`pi-version` \| `\K[^`]+' README.md)"
+          fi
+          {
+            printf 'prompt<<EOF_PROMPT\n%s\nEOF_PROMPT\n' "$prompt"
+            echo "tools=${tools}"
+            echo "expected=${expected}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Run agent with a mechanically verifiable task
         id: agent
         uses: ./
@@ -35,32 +65,36 @@ jobs:
           model: ${{ inputs.model }}
           fallback-models: ${{ inputs.fallback-models }}
           message-threads: ${{ inputs.message-threads }}
-          tools: read
+          tools: ${{ steps.task.outputs.tools }}
           max-turns: '5'
           timeout-minutes: '5'
-          prompt: |
-            Read README.md in the current directory and reply with exactly one line:
-            the value of the `pi-version` default listed in the Inputs table,
-            with no other text, no punctuation, and no code fences.
+          prompt: ${{ steps.task.outputs.prompt }}
           cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
           app-client-id: ${{ inputs.use-app && vars.PI_APP_CLIENT_ID || '' }}
           app-private-key: ${{ inputs.use-app && secrets.PI_APP_PRIVATE_KEY || '' }}
+          github-token: ${{ inputs.use-github-token && github.token || '' }}
 
-      - name: Verify the agent actually read the repo
+      - name: Verify the result, identity and transcript
         env:
           RESULT: ${{ steps.agent.outputs.result }}
+          EXPECTED: ${{ steps.task.outputs.expected }}
           TURNS: ${{ steps.agent.outputs.turns }}
           MODEL_USED: ${{ steps.agent.outputs.model-used }}
           IDENTITY: ${{ steps.agent.outputs.bot-identity }}
+          TRANSCRIPT: ${{ steps.agent.outputs.transcript }}
           USE_APP: ${{ inputs.use-app }}
+          USE_GITHUB_TOKEN: ${{ inputs.use-github-token }}
+          GITHUB_TOKEN_VALUE: ${{ github.token }}
         run: |
           set -euo pipefail
-          expected="$(grep -oP '`pi-version` \| `\K[^`]+' README.md)"
           actual="$(printf '%s' "$RESULT" | tr -d '[:space:]')"
-          echo "expected=${expected} actual=${actual} turns=${TURNS} model-used=${MODEL_USED} identity=${IDENTITY}"
-          [ "$actual" = "$expected" ] || { echo "::error::agent output did not match README"; exit 1; }
+          echo "expected=${EXPECTED} actual=${actual} turns=${TURNS} model-used=${MODEL_USED} identity=${IDENTITY}"
+          [ "$actual" = "$EXPECTED" ] || { echo "::error::agent output did not match the expected value"; exit 1; }
           if [ "$USE_APP" = "true" ]; then
             [[ "$IDENTITY" == *"[bot]" ]] || { echo "::error::expected an App bot identity, got ${IDENTITY}"; exit 1; }
+          fi
+          if [ "$USE_GITHUB_TOKEN" = "true" ] && grep -qF "$GITHUB_TOKEN_VALUE" "$TRANSCRIPT"; then
+            echo "::error::the transcript contains the raw github-token"; exit 1
           fi
           echo "smoke test passed"
