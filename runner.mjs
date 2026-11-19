@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { planModelChain } from "./lib/models.mjs";
+import { parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
 
 // The extension registers models under this provider name: `cpa/<model-id>`.
 const PROVIDER_NAME = "cpa";
@@ -170,6 +170,20 @@ try {
 } catch (error) {
   fail(`Gateway unreachable at ${cpaBaseUrl}/models: ${error instanceof Error ? error.message : String(error)}`);
 }
+// CPA's Codex-client catalog carries each model's context window, output limit and effort levels;
+// plain /models does not, and a one-shot pi never fetches them itself. Optional: without them
+// the extension falls back to pi's catalog and models.dev.
+let modelSpecs = new Map();
+try {
+  const response = await fetch(`${cpaBaseUrl}/models?client_version=`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${cpaApiKey}` },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  modelSpecs = parseModelSpecs(await response.json());
+} catch (error) {
+  warn(`Gateway model specs unavailable (${error instanceof Error ? error.message : String(error)}); using fallback model metadata.`);
+}
 // Every model in the chain is tried, listed or not: CLIProxyAPI hides a model
 // it has suspended, and only a request through it clears that (lib/models.mjs).
 // An unlisted model gets a synthetic snapshot entry so pi resolves it with real
@@ -194,7 +208,7 @@ const snapshotDir = path.join(
 mkdirSync(snapshotDir, { recursive: true, mode: 0o700 });
 writeFileSync(
   path.join(snapshotDir, "cpa-models.json"),
-  `${JSON.stringify({ fetchedAt: Date.now(), data: snapshotModels }, null, 2)}\n`,
+  `${JSON.stringify({ fetchedAt: Date.now(), data: withModelSpecs(snapshotModels, modelSpecs) }, null, 2)}\n`,
   { mode: 0o600 },
 );
 const gatewayHost = new URL(cpaBaseUrl).host;
@@ -233,6 +247,36 @@ const runnerTemp = process.env.RUNNER_TEMP || process.env.TMPDIR || "/tmp";
 const agentDir = path.join(runnerTemp, "pi-action-agent");
 mkdirSync(agentDir, { recursive: true });
 childEnv.PI_CODING_AGENT_DIR = agentDir;
+
+const messageThreadsInput = (input("PI_ACTION_MESSAGE_THREADS") || "false").toLowerCase();
+if (!["true", "false"].includes(messageThreadsInput)) {
+  fail("`message-threads` must be either `true` or `false`.");
+}
+// The provider extension reads its settings from the agent dir's settings.json, then lets the
+// checkout's .pi/settings.json override them whether or not pi trusts the project.
+writeFileSync(
+  path.join(agentDir, "settings.json"),
+  `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads: messageThreadsInput === "true" } }, null, 2)}\n`,
+);
+let messageThreads = messageThreadsInput === "true";
+let messageThreadsSource = "input";
+const projectSettingsPath = path.join(process.cwd(), ".pi", "settings.json");
+if (existsSync(projectSettingsPath)) {
+  let projectThreads;
+  try {
+    projectThreads = JSON.parse(readFileSync(projectSettingsPath, "utf8"))?.["pi-cliproxyapi-provider"]?.messageThreads;
+  } catch {
+    projectThreads = undefined;
+  }
+  if (typeof projectThreads === "boolean" && projectThreads !== messageThreads) {
+    warn(
+      `.pi/settings.json sets pi-cliproxyapi-provider.messageThreads to ${projectThreads}, which overrides ` +
+        `\`message-threads: ${messageThreadsInput}\` for the provider extension.`,
+    );
+    messageThreads = projectThreads;
+    messageThreadsSource = ".pi/settings.json";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Build the pi invocation
@@ -479,7 +523,9 @@ summary("### Pi agent run");
 summary("");
 summary(
   `| | |\n|---|---|\n| Model | \`${final.model}\` |\n| Gateway | ${gatewayHost} |\n| Identity | ${identity} |\n` +
-    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |`,
+    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |\n` +
+    `| Claude message threads | ${messageThreads ? "on" : "off"}` +
+    `${messageThreadsSource === "input" ? "" : ` (from ${messageThreadsSource})`} |`,
 );
 if (attempts.length > 1 || unlistedModels.length > 0) {
   summary("");

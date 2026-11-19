@@ -8,8 +8,12 @@ on:
         description: 'Gateway model to pin'
         default: 'cpa/claude-sonnet-5-5'
       fallback-models:
-        description: 'Fallback models (e.g. a disabled primary plus cpa/gpt-6.1-sol exercises fallback)'
+        description: 'Fallback models (e.g. a disabled primary plus cpa/gpt-6.2-sol exercises fallback)'
         default: ''
+      message-threads:
+        description: 'Send Claude turns as message threads'
+        type: boolean
+        default: false
       use-app:
         description: 'Mint the pi GitHub App token and assert the bot identity'
         type: boolean
@@ -30,6 +34,7 @@ jobs:
         with:
           model: ${{ inputs.model }}
           fallback-models: ${{ inputs.fallback-models }}
+          message-threads: ${{ inputs.message-threads }}
           tools: read
           max-turns: '5'
           timeout-minutes: '5'

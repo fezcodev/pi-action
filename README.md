@@ -48,7 +48,7 @@ newest stays expanded. See [`examples/workflows/pi-review.yml`](examples/workflo
     cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
 ```
 
-- **Models:** `cpa/gpt-6.1-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
+- **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
   unavailable model, with `thinking: high`. Out of quota on both posts nothing and exits 0.
 - **The agent never writes to GitHub, or to disk.** The action prefetches the PR's metadata, diff and
   earlier reviews into files; the agent reads those and the checkout with read-only tools
@@ -145,6 +145,7 @@ the runner writes.
 | `model` | `cpa/claude-opus-5-5` | Gateway model, `cpa/<id>`. |
 | `fallback-models` | — | Ordered fallback models, comma- or newline-separated. See [Model fallback](#model-fallback). |
 | `thinking` | — | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
+| `message-threads` | `false` | `true` sends Claude turns as Anthropic message threads (only new messages per request). Needs CLIProxyAPI v8.0.76+. |
 | `tools` | — | Comma-separated tool allowlist. Empty means Pi's default toolset. |
 | `max-turns` | `25` | Assistant turn cap. Exceeding it **fails the step**. |
 | `timeout-minutes` | `20` | Wall-clock limit. |
@@ -158,8 +159,8 @@ the runner writes.
 | `app-permission-pull-requests` | `write` | Pull requests permission of the minted App token. Empty omits it. |
 | `github-token` | — | Explicit `GH_TOKEN` for the agent. Mutually exclusive with `app-client-id`. |
 | `working-directory` | `.` | Directory the agent runs in. |
-| `pi-version` | `1.1.0` | Pinned Pi version. |
-| `provider-extension-version` | `0.4.0` | Pinned `@hank-warren/pi-cliproxyapi-provider` version. |
+| `pi-version` | `1.5.2` | Pinned Pi version. |
+| `provider-extension-version` | `0.6.0` | Pinned `@hank-warren/pi-cliproxyapi-provider` version. |
 | `upload-transcript` | `true` | Upload the JSONL transcript as an artifact. |
 | `transcript-name` | `pi-session` | Artifact name. |
 
@@ -203,7 +204,7 @@ recorded in [`app-manifest.yml`](app-manifest.yml).
 - uses: hank-warren/pi-action@v1
   with:
     model: cpa/claude-opus-5-5
-    fallback-models: cpa/gpt-6.1-sol
+    fallback-models: cpa/gpt-6.2-sol
     # ...
 ```
 
@@ -227,7 +228,7 @@ The action walks the chain `model`, then `fallback-models` in order:
 Fallback restarts the task from scratch on the next model; it does not continue the previous model's
 partial run. Keep posting as the skill's last step so a run that dies before it leaves nothing to
 duplicate. `timeout-minutes` is one budget for all attempts, `max-turns` applies per attempt, and the
-step summary lists what happened to each model. Each attempt's agent sees its bare model id as `PI_MODEL_ID` (e.g. `gpt-6.1-sol`), so a
+step summary lists what happened to each model. Each attempt's agent sees its bare model id as `PI_MODEL_ID` (e.g. `gpt-6.2-sol`), so a
 skill can sign its output with the model that actually answered:
 `*Automated review by Pi - $PI_MODEL_ID*`. The same skill and tools work across Claude
 (`anthropic-messages`) and GPT (`openai-responses`) models; expect somewhat different output.

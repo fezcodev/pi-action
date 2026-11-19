@@ -33,7 +33,7 @@ jobs:
         with:
           cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
-          # Defaults: cpa/gpt-6.1-sol, falling back to cpa/claude-opus-5-5, thinking high.
+          # Defaults: cpa/gpt-6.2-sol, falling back to cpa/claude-opus-5-5, thinking high.
           # mode: comment             # never approve or block, just comment
           # app-client-id: ${{ vars.PI_APP_CLIENT_ID }}        # post as your App instead of
           # app-private-key: ${{ secrets.PI_APP_PRIVATE_KEY }} # github-actions[bot]

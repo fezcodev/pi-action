@@ -81,7 +81,10 @@ jobs:
           if ! { grep -qF 'join(homedir(), ".cache", "pi-cliproxyapi-provider")' "$src/src/config.ts" \
             && grep -qF 'Buffer.from(`${config.providerName}\n${config.baseUrl}`).toString("base64url")' "$src/src/config.ts" \
             && grep -qF '"cpa-models.json"' "$src/src/discovery.ts" \
-            && grep -qF 'JSON.stringify({ fetchedAt, data }' "$src/src/cache.ts"; }; then
+            && grep -qF 'JSON.stringify({ fetchedAt, data }' "$src/src/cache.ts" \
+            && grep -qF 'const spec = parseSpec(record.spec);' "$src/src/cpa.ts" \
+            && grep -qF 'record.contextWindow' "$src/src/cpa.ts" \
+            && grep -qF 'record.reasoningLevels' "$src/src/cpa.ts"; }; then
             echo "::error::pi-cliproxyapi-provider ${version} changed its CPA snapshot layout; update the seed in runner.mjs"
             exit 1
           fi
