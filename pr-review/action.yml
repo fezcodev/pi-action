@@ -14,7 +14,7 @@ branding:
 # agent cannot alter the scripts that later run with the write token.
 #
 # Check out the PR before this action (actions/checkout on a pull_request event
-# does), ideally with `persist-credentials: false`.
+# does) with `persist-credentials: false`; the action refuses a checkout holding a token.
 
 inputs:
   cliproxyapi-api-key:
@@ -33,6 +33,12 @@ inputs:
       so the files on disk always match the diff being reviewed. Empty reviews the live head.
     required: false
     default: ${{ github.event.pull_request.head.sha }}
+  base-ref:
+    description: >-
+      Base branch the checkout was merged against. The review is skipped when the PR has since been
+      retargeted. Empty skips the check.
+    required: false
+    default: ${{ github.event.pull_request.base.ref }}
   repository:
     description: 'owner/name of the pull request''s repository. The checkout in the working directory must be this repository.'
     required: false
@@ -190,6 +196,7 @@ runs:
         PI_REPO: ${{ inputs.repository }}
         PI_PR: ${{ inputs.pr-number }}
         PI_EXPECTED_SHA: ${{ inputs.head-sha }}
+        PI_EXPECTED_BASE: ${{ inputs.base-ref }}
       run: |
         set -euo pipefail
         [[ "$PI_PR" =~ ^[0-9]+$ ]] || { echo "::error title=pi-pr-review::pr-number must be a number, got '${PI_PR}'."; exit 1; }
@@ -207,6 +214,8 @@ runs:
           run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: opened by ${login} (${type}); Pi reviews human-authored PRs only."
         elif [ -n "$PI_EXPECTED_SHA" ] && [ "$PI_EXPECTED_SHA" != "$sha" ]; then
           run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: head is ${sha:0:7}, not the checked-out ${PI_EXPECTED_SHA:0:7}; the run for the newer push reviews it."
+        elif [ -n "$PI_EXPECTED_BASE" ] && [ "$PI_EXPECTED_BASE" != "$(jq -r .base "$work/in/pr.json")" ]; then
+          run=false; echo "::notice title=pi-pr-review::Skipping #${PI_PR}: it now targets $(jq -r .base "$work/in/pr.json"), not the checked-out ${PI_EXPECTED_BASE}."
         fi
         if [ "$run" = "true" ]; then
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/files?per_page=100" \
@@ -235,11 +244,24 @@ runs:
     # Read-only tools are no filesystem sandbox: the token stays in runner files the agent could
     # read. An agent without bash cannot use it, so it is dead before the agent starts.
     - name: Revoke the read-only token
-      if: ${{ steps.read-token.outputs.token != '' && !contains(inputs.tools, 'bash') }}
+      if: ${{ always() && steps.read-token.outputs.token != '' && !contains(inputs.tools, 'bash') }}
       shell: bash
       env:
         GH_TOKEN: ${{ steps.read-token.outputs.token }}
       run: gh api -X DELETE installation/token --silent
+
+    # actions/checkout persists its token in git config (or a file that config includes) unless
+    # persist-credentials is false; read-only tools could read it.
+    - name: Check the checkout holds no credentials
+      if: ${{ steps.gate.outputs.run == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        if git config --includes --get-regexp '^http\..*extraheader$' >/dev/null 2>&1; then
+          echo "::error title=pi-pr-review::The checkout persisted its GitHub token, which the agent could read. Check out with persist-credentials: false."
+          exit 1
+        fi
 
     - name: Install pi
       if: ${{ steps.gate.outputs.run == 'true' }}

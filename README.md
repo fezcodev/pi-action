@@ -41,7 +41,7 @@ workflow is the whole setup ([`examples/workflows/pi-review.yml`](examples/workf
 ```yaml
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 permissions:
   contents: read
   pull-requests: write
@@ -52,7 +52,8 @@ jobs:
       CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}  # gateway URL: vars.CLIPROXYAPI_BASE_URL
 ```
 
-It skips fork and bot PRs, cancels a superseded run, and runs `pr-review` from the same commit as
+It skips fork and bot PRs, reruns when the PR is retargeted (`edited` with a base change), cancels a
+superseded run, and runs `pr-review` from the same commit as
 the workflow, whatever ref the caller pins. Its inputs are `pr-review`'s, minus identity, plus
 `cliproxyapi-base-url`, `runs-on` and `job-timeout-minutes`. Pass only the gateway key, not
 `secrets: inherit`, which would hand the workflow every repository secret. For an App identity or more control, use the
