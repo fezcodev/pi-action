@@ -262,8 +262,14 @@ writeFileSync(
 let messageThreads = messageThreadsInput === "true";
 let messageThreadsSource = "input";
 const projectSettingsPath = path.join(process.cwd(), ".pi", "settings.json");
-if (existsSync(projectSettingsPath)) {
-  const { error, messageThreads: projectThreads } = readProjectProviderSettings(readFileSync(projectSettingsPath, "utf8"));
+let projectSettingsText;
+try {
+  projectSettingsText = readFileSync(projectSettingsPath, "utf8");
+} catch {
+  // Missing, unreadable or a directory: pi's SettingsManager reads all of these as empty settings.
+}
+if (projectSettingsText !== undefined) {
+  const { error, messageThreads: projectThreads } = readProjectProviderSettings(projectSettingsText);
   if (error) {
     fail(
       `.pi/settings.json: ${error}. The provider extension rejects the file, which leaves no gateway models; ` +
@@ -458,8 +464,9 @@ function runAttempt(model, attempt) {
       if (event) handleEvent(event);
     });
 
-    child.stderr.on("data", (chunk) => {
-      const text = redact(chunk.toString());
+    // Whole lines, so a credential split across two chunks is still redacted before it is logged.
+    readline.createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (raw) => {
+      const text = `${redact(raw)}\n`;
       stderrChunks.push(text);
       process.stderr.write(text);
     });
@@ -471,8 +478,7 @@ function runAttempt(model, attempt) {
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      // Rejoined chunks can reassemble a secret that per-chunk redaction missed.
-      const stderrText = redact(stderrChunks.join(""));
+      const stderrText = stderrChunks.join("");
       // Judged on how the run ENDED: the last assistant message (also when the
       // timeout or turn cap killed pi mid-retry), or stderr when pi bailed before
       // emitting one. A 429 that a retry recovered from does not count.
