@@ -54,7 +54,7 @@ jobs:
 
 It skips fork and bot PRs, reruns when the PR is retargeted (`edited` with a base change), cancels a
 superseded run, and runs `pr-review` from the same commit as
-the workflow, whatever ref the caller pins. Its inputs are `pr-review`'s, minus identity, plus
+the workflow, whatever ref the caller pins. Its inputs are `pr-review`'s, minus identity and `tools` (always read-only), plus
 `cliproxyapi-base-url`, `runs-on` and `job-timeout-minutes`. Pass only the gateway key, not
 `secrets: inherit`, which would hand the workflow every repository secret. For an App identity or more control, use the
 `hank-warren/pi-action/pr-review@v1` action in your own job after `actions/checkout` with

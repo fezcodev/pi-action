@@ -4,6 +4,7 @@ name: Pi PR Review
 # (examples/workflows/pi-review.yml). It runs the pr-review action from this
 # repository at the exact commit the caller pinned, and keeps that checkout out of
 # the agent's working directory. Posts as github-actions[bot] with GITHUB_TOKEN.
+# The agent always gets pr-review's read-only tools; widening them needs the action itself.
 #
 # Caller needs: a pull_request trigger, `permissions: contents: read,
 # pull-requests: write`, the CLIPROXYAPI_API_KEY secret passed explicitly (not
@@ -30,9 +31,6 @@ on:
       message-threads:
         type: string
         default: 'false'
-      tools:
-        type: string
-        default: 'read,grep,find,ls'
       max-turns:
         type: string
         default: '40'
@@ -123,7 +121,6 @@ jobs:
           thinking: ${{ inputs.thinking }}
           mode: ${{ inputs.mode }}
           message-threads: ${{ inputs.message-threads }}
-          tools: ${{ inputs.tools }}
           max-turns: ${{ inputs.max-turns }}
           timeout-minutes: ${{ inputs.timeout-minutes }}
           on-rate-limit: ${{ inputs.on-rate-limit }}
