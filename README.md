@@ -145,7 +145,7 @@ the runner writes.
 | `model` | `cpa/claude-opus-5-5` | Gateway model, `cpa/<id>`. |
 | `fallback-models` | — | Ordered fallback models, comma- or newline-separated. See [Model fallback](#model-fallback). |
 | `thinking` | — | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. |
-| `message-threads` | `false` | `true` sends Claude turns as Anthropic message threads (only new messages per request). Needs CLIProxyAPI v8.0.76+. A checkout's `.pi/settings.json` `pi-cliproxyapi-provider.messageThreads` overrides it, and an invalid `pi-cliproxyapi-provider` block there fails the step. |
+| `message-threads` | `false` | `true` sends Claude turns as Anthropic message threads (only new messages per request). Needs CLIProxyAPI v8.0.76+. Needs `pi-cliproxyapi-provider` 0.6.0+. A checkout's `.pi/settings.json` `pi-cliproxyapi-provider.messageThreads` overrides it. If the provider rejects its settings, the step fails with its reason. |
 | `tools` | — | Comma-separated tool allowlist. Empty means Pi's default toolset. |
 | `max-turns` | `25` | Assistant turn cap. Exceeding it **fails the step**. |
 | `timeout-minutes` | `20` | Wall-clock limit. |

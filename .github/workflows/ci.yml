@@ -89,18 +89,3 @@ jobs:
             exit 1
           fi
           echo "snapshot contract ok for pi-cliproxyapi-provider ${version}"
-          # lib/settings.mjs mirrors the extension's settings validation.
-          # shellcheck disable=SC2016 # JavaScript, not shell
-          SETTINGS_SRC="$src/src/settings.ts" node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            import { BOOLEAN_SETTINGS } from "./lib/settings.mjs";
-            const src = readFileSync(process.env.SETTINGS_SRC, "utf8");
-            const theirs = [...src.matchAll(/record\.(\w+) !== undefined && typeof record\.\1 !== "boolean"/g)].map((m) => m[1]).sort();
-            const ours = [...BOOLEAN_SETTINGS].sort();
-            const enumOk = src.includes(`gpt56ContextWindow !== "canonical" && gpt56ContextWindow !== "full"`);
-            if (JSON.stringify(theirs) !== JSON.stringify(ours) || !enumOk) {
-              console.log(`::error::provider settings validation changed (booleans: ${theirs}); update lib/settings.mjs`);
-              process.exit(1);
-            }
-            console.log(`settings contract ok: ${ours.join(", ")}, gpt56ContextWindow`);
-          '

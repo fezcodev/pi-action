@@ -18,7 +18,7 @@ import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { inferOwner, parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
-import { validateProviderSettings } from "./lib/settings.mjs";
+import { projectMessageThreads, providerStartupFailure, supportsMessageThreads } from "./lib/settings.mjs";
 
 // The extension registers models under this provider name: `cpa/<model-id>`.
 const PROVIDER_NAME = "cpa";
@@ -250,50 +250,6 @@ const agentDir = path.join(runnerTemp, "pi-action-agent");
 mkdirSync(agentDir, { recursive: true });
 childEnv.PI_CODING_AGENT_DIR = agentDir;
 
-const messageThreadsInput = (input("PI_ACTION_MESSAGE_THREADS") || "false").toLowerCase();
-if (!["true", "false"].includes(messageThreadsInput)) {
-  fail("`message-threads` must be either `true` or `false`.");
-}
-// The provider extension reads its settings from the agent dir's settings.json, then lets the
-// checkout's .pi/settings.json override them whether or not pi trusts the project (lib/settings.mjs).
-writeFileSync(
-  path.join(agentDir, "settings.json"),
-  `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads: messageThreadsInput === "true" } }, null, 2)}\n`,
-);
-let messageThreads = messageThreadsInput === "true";
-let messageThreadsSource = "input";
-// Loaded with the globally installed pi's own SettingsManager (lib/install-pi.sh), the loader the
-// provider uses, so unreadable, unparseable or unlockable files count as empty exactly as they do there.
-let projectSettings;
-try {
-  const piRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-  const piEntry = path.join(piRoot, "@earendil-works", "pi-coding-agent", "dist", "index.js");
-  const { SettingsManager } = await import(pathToFileURL(piEntry).href);
-  projectSettings = SettingsManager.create(process.cwd(), agentDir).getProjectSettings();
-} catch (error) {
-  warn(
-    `Could not load pi's settings to check .pi/settings.json (${error instanceof Error ? error.message : String(error)}); ` +
-      "an invalid pi-cliproxyapi-provider block there would leave no gateway models.",
-  );
-}
-if (projectSettings !== undefined) {
-  const { error, messageThreads: projectThreads } = validateProviderSettings(projectSettings);
-  if (error) {
-    fail(
-      `.pi/settings.json: ${error}. The provider extension rejects the file, which leaves no gateway models; ` +
-        "fix or remove the pi-cliproxyapi-provider block.",
-    );
-  }
-  if (projectThreads !== undefined && projectThreads !== messageThreads) {
-    warn(
-      `.pi/settings.json sets pi-cliproxyapi-provider.messageThreads to ${projectThreads}, which overrides ` +
-        `\`message-threads: ${messageThreadsInput}\` for the provider extension.`,
-    );
-    messageThreads = projectThreads;
-    messageThreadsSource = ".pi/settings.json";
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Build the pi invocation
 // ---------------------------------------------------------------------------
@@ -308,6 +264,56 @@ const extensionEntry = path.join(
 );
 if (!existsSync(extensionEntry)) {
   fail(`Provider extension entry not found at ${extensionEntry}. The install step did not complete.`);
+}
+let providerVersion;
+try {
+  providerVersion = JSON.parse(readFileSync(path.join(path.dirname(extensionEntry), "package.json"), "utf8")).version;
+} catch {
+  providerVersion = undefined;
+}
+
+const messageThreadsInput = (input("PI_ACTION_MESSAGE_THREADS") || "false").toLowerCase();
+if (!["true", "false"].includes(messageThreadsInput)) {
+  fail("`message-threads` must be either `true` or `false`.");
+}
+const providerHasThreads = supportsMessageThreads(providerVersion);
+if (messageThreadsInput === "true" && !providerHasThreads) {
+  warn(`\`message-threads: true\` needs pi-cliproxyapi-provider 0.6.0 or later (installed: ${providerVersion}); ignored.`);
+}
+// The provider extension reads its settings from the agent dir's settings.json, then lets the
+// checkout's .pi/settings.json override them whether or not pi trusts the project.
+writeFileSync(
+  path.join(agentDir, "settings.json"),
+  `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads: messageThreadsInput === "true" } }, null, 2)}\n`,
+);
+let messageThreads = providerHasThreads && messageThreadsInput === "true";
+let messageThreadsSource = "input";
+if (providerHasThreads) {
+  // Read with the globally installed pi's own SettingsManager (lib/install-pi.sh), the loader the
+  // provider uses, so the summary reports the value the provider actually sees.
+  let projectSettings;
+  try {
+    const piRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    const piEntry = path.join(piRoot, "@earendil-works", "pi-coding-agent", "dist", "index.js");
+    const { SettingsManager } = await import(pathToFileURL(piEntry).href);
+    projectSettings = SettingsManager.create(process.cwd(), agentDir).getProjectSettings();
+  } catch (error) {
+    if (existsSync(path.join(process.cwd(), ".pi", "settings.json"))) {
+      warn(
+        `Could not read .pi/settings.json through pi (${error instanceof Error ? error.message : String(error)}); ` +
+          "the summary's message-threads value may not reflect it.",
+      );
+    }
+  }
+  const projectThreads = projectMessageThreads(projectSettings);
+  if (projectThreads !== undefined && projectThreads !== messageThreads) {
+    warn(
+      `.pi/settings.json sets pi-cliproxyapi-provider.messageThreads to ${projectThreads}, which overrides ` +
+        `\`message-threads: ${messageThreadsInput}\` for the provider extension.`,
+    );
+    messageThreads = projectThreads;
+    messageThreadsSource = ".pi/settings.json";
+  }
 }
 
 const maxTurns = Number.parseInt(input("PI_ACTION_MAX_TURNS") || "25", 10);
@@ -412,6 +418,9 @@ function runAttempt(model, attempt) {
     let finalError = "";
     const toolCalls = [];
     const stderrChunks = [];
+    // Set when the provider extension fell back to placeholder models (invalid settings, bad
+    // config). pi then runs the model as an unknown custom id, bypassing the provider's routing.
+    let providerFailure;
 
     const timer = setTimeout(
       () => {
@@ -477,6 +486,10 @@ function runAttempt(model, attempt) {
       const text = `${redact(raw)}\n`;
       stderrChunks.push(text);
       process.stderr.write(text);
+      if (providerFailure === undefined) {
+        providerFailure = providerStartupFailure(text);
+        if (providerFailure !== undefined) child.kill("SIGKILL");
+      }
     });
 
     child.on("error", (error) => {
@@ -504,8 +517,9 @@ function runAttempt(model, attempt) {
         timedOut,
         capExceeded,
         stderrTail: stderrText.trim().split("\n").slice(-20).join("\n"),
-        quotaExhausted,
-        modelUnavailable: !quotaExhausted && endedOn(MODEL_UNAVAILABLE_PATTERN),
+        providerFailure,
+        quotaExhausted: providerFailure === undefined && quotaExhausted,
+        modelUnavailable: providerFailure === undefined && !quotaExhausted && endedOn(MODEL_UNAVAILABLE_PATTERN),
       });
     });
   });
@@ -555,6 +569,8 @@ if (attempts.length > 1 || unlistedModels.length > 0) {
     const result = attempts.find((attempt) => attempt.model === model);
     const outcome = !result
       ? "not tried"
+      : result.providerFailure !== undefined
+        ? "provider extension failed to start"
       : result.quotaExhausted
         ? "quota exhausted"
         : result.modelUnavailable
@@ -574,6 +590,13 @@ if (final.finalText) {
 }
 
 const chainNote = modelChain.length > 1 ? ` (model chain: ${modelChain.join(", ")})` : "";
+// Every model would hit the same failure, so the chain stops at the first attempt.
+if (final.providerFailure !== undefined) {
+  fail(
+    `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${final.providerFailure.slice(0, 500)}. ` +
+      "No gateway model is usable; check .pi/settings.json in the checkout.",
+  );
+}
 // Quota first: a run killed by the timeout while pi waited out a quota retry is
 // out of quota, not hung.
 if (final.quotaExhausted) {
