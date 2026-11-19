@@ -16,7 +16,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
+import { inferOwner, parseModelSpecs, planModelChain, withModelSpecs } from "./lib/models.mjs";
+import { readProjectProviderSettings } from "./lib/settings.mjs";
 
 // The extension registers models under this provider name: `cpa/<model-id>`.
 const PROVIDER_NAME = "cpa";
@@ -253,7 +254,7 @@ if (!["true", "false"].includes(messageThreadsInput)) {
   fail("`message-threads` must be either `true` or `false`.");
 }
 // The provider extension reads its settings from the agent dir's settings.json, then lets the
-// checkout's .pi/settings.json override them whether or not pi trusts the project.
+// checkout's .pi/settings.json override them whether or not pi trusts the project (lib/settings.mjs).
 writeFileSync(
   path.join(agentDir, "settings.json"),
   `${JSON.stringify({ "pi-cliproxyapi-provider": { messageThreads: messageThreadsInput === "true" } }, null, 2)}\n`,
@@ -262,13 +263,14 @@ let messageThreads = messageThreadsInput === "true";
 let messageThreadsSource = "input";
 const projectSettingsPath = path.join(process.cwd(), ".pi", "settings.json");
 if (existsSync(projectSettingsPath)) {
-  let projectThreads;
-  try {
-    projectThreads = JSON.parse(readFileSync(projectSettingsPath, "utf8"))?.["pi-cliproxyapi-provider"]?.messageThreads;
-  } catch {
-    projectThreads = undefined;
+  const { error, messageThreads: projectThreads } = readProjectProviderSettings(readFileSync(projectSettingsPath, "utf8"));
+  if (error) {
+    fail(
+      `.pi/settings.json: ${error}. The provider extension rejects the file, which leaves no gateway models; ` +
+        "fix or remove the pi-cliproxyapi-provider block.",
+    );
   }
-  if (typeof projectThreads === "boolean" && projectThreads !== messageThreads) {
+  if (projectThreads !== undefined && projectThreads !== messageThreads) {
     warn(
       `.pi/settings.json sets pi-cliproxyapi-provider.messageThreads to ${projectThreads}, which overrides ` +
         `\`message-threads: ${messageThreadsInput}\` for the provider extension.`,
@@ -469,7 +471,8 @@ function runAttempt(model, attempt) {
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      const stderrText = stderrChunks.join("");
+      // Rejoined chunks can reassemble a secret that per-chunk redaction missed.
+      const stderrText = redact(stderrChunks.join(""));
       // Judged on how the run ENDED: the last assistant message (also when the
       // timeout or turn cap killed pi mid-retry), or stderr when pi bailed before
       // emitting one. A 429 that a retry recovered from does not count.
@@ -523,9 +526,12 @@ summary("### Pi agent run");
 summary("");
 summary(
   `| | |\n|---|---|\n| Model | \`${final.model}\` |\n| Gateway | ${gatewayHost} |\n| Identity | ${identity} |\n` +
-    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |\n` +
-    `| Claude message threads | ${messageThreads ? "on" : "off"}` +
-    `${messageThreadsSource === "input" ? "" : ` (from ${messageThreadsSource})`} |`,
+    `| Turns | ${final.turns} / ${maxTurns} |\n| Retries | ${final.retries} |\n| Tool calls | ${final.toolCalls.length} |` +
+    // Threads apply only to Claude models; omit the row when another model answered.
+    (inferOwner(modelIdOf(final.model)) === "anthropic"
+      ? `\n| Claude message threads | ${messageThreads ? "on" : "off"}` +
+        `${messageThreadsSource === "input" ? "" : ` (from ${messageThreadsSource})`} |`
+      : ""),
 );
 if (attempts.length > 1 || unlistedModels.length > 0) {
   summary("");
