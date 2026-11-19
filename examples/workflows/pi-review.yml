@@ -15,7 +15,8 @@ permissions:
 jobs:
   pi-review:
     uses: hank-warren/pi-action/.github/workflows/pr-review.yml@v1
-    secrets: inherit
+    secrets:
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
     # with:
     #   mode: comment        # never approve or block, just comment
     #   model: cpa/claude-opus-5-5

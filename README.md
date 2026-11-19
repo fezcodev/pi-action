@@ -48,12 +48,14 @@ permissions:
 jobs:
   pi-review:
     uses: hank-warren/pi-action/.github/workflows/pr-review.yml@v1
-    secrets: inherit  # CLIPROXYAPI_API_KEY; the gateway URL comes from vars.CLIPROXYAPI_BASE_URL
+    secrets:
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}  # gateway URL: vars.CLIPROXYAPI_BASE_URL
 ```
 
 It skips fork and bot PRs, cancels a superseded run, and runs `pr-review` from the same commit as
 the workflow, whatever ref the caller pins. Its inputs are `pr-review`'s, minus identity, plus
-`cliproxyapi-base-url` and `runs-on`. For an App identity or more control, use the
+`cliproxyapi-base-url`, `runs-on` and `job-timeout-minutes`. Pass only the gateway key, not
+`secrets: inherit`, which would hand the workflow every repository secret. For an App identity or more control, use the
 `hank-warren/pi-action/pr-review@v1` action in your own job after `actions/checkout` with
 `persist-credentials: false`.
 

@@ -14,4 +14,5 @@ permissions:
 jobs:
   pi-review:
     uses: ./.github/workflows/pr-review.yml
-    secrets: inherit
+    secrets:
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}

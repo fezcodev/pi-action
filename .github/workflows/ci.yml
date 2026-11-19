@@ -67,7 +67,7 @@ jobs:
           for name, spec in inputs.items():
               if name in action and "default" in action[name] and str(spec.get("default")) != str(action[name]["default"]):
                   errors.append(f"{name}: default {spec.get('default')!r} != pr-review {action[name]['default']!r}")
-              if name != "runs-on" and name not in passed:
+              if name not in ("runs-on", "job-timeout-minutes") and name not in passed:
                   errors.append(f"{name}: declared but not passed to pr-review")
           for name in passed:
               if name not in action:

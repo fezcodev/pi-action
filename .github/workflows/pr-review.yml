@@ -6,8 +6,9 @@ name: Pi PR Review
 # the agent's working directory. Posts as github-actions[bot] with GITHUB_TOKEN.
 #
 # Caller needs: a pull_request trigger, `permissions: contents: read,
-# pull-requests: write`, the CLIPROXYAPI_API_KEY secret (passed or inherited) and
-# the CLIPROXYAPI_BASE_URL variable (or the cliproxyapi-base-url input).
+# pull-requests: write`, the CLIPROXYAPI_API_KEY secret passed explicitly (not
+# `secrets: inherit`, which would hand over every repo secret) and the
+# CLIPROXYAPI_BASE_URL variable (or the cliproxyapi-base-url input).
 
 on:
   workflow_call:
@@ -54,6 +55,10 @@ on:
       runs-on:
         type: string
         default: 'ubuntu-latest'
+      job-timeout-minutes:
+        description: 'Job limit; keep about 10 minutes above timeout-minutes for setup and posting.'
+        type: number
+        default: 30
     secrets:
       CLIPROXYAPI_API_KEY:
         required: false
@@ -75,7 +80,7 @@ jobs:
       github.event.pull_request.user.type != 'Bot' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ inputs.runs-on }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
     permissions:
       contents: read
       pull-requests: write
