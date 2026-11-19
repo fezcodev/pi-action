@@ -9,7 +9,7 @@
  * Node builtins plus the GITHUB_OUTPUT / GITHUB_STEP_SUMMARY file protocols.
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -363,6 +363,33 @@ for (const skill of input("PI_ACTION_SKILL").split("\n").map((s) => s.trim()).fi
 const appendSystemPrompt = input("PI_ACTION_APPEND_SYSTEM_PROMPT");
 if (appendSystemPrompt) baseArgs.push("--append-system-prompt", appendSystemPrompt);
 
+// Load the provider once without a prompt. If it cannot start, it registers placeholder models,
+// possibly at its default localhost URL with the gateway key, before saying so on stderr, so a
+// prompted run could send a request before the runner reacts. `--list-models --offline` loads the
+// extension exactly as the run will (same flags, env and cwd) and never sends a prompt.
+const preflight = spawnSync(
+  "pi",
+  ["--offline", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-mcp",
+    "--extension", extensionEntry, "--list-models", `${PROVIDER_NAME}/`],
+  { env: childEnv, encoding: "utf8", timeout: 120_000 },
+);
+const preflightFailure = String(preflight.stderr ?? "")
+  .split("\n")
+  .map((line) => providerStartupFailure(redact(line)))
+  .find((reason) => reason !== undefined);
+if (preflightFailure !== undefined) {
+  fail(
+    `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${preflightFailure.slice(0, 500)}. ` +
+      "No request was sent. Check the provider's settings and config files in the checkout (.pi/).",
+  );
+}
+if (preflight.error || preflight.status !== 0) {
+  warn(
+    `Provider preflight did not complete (${preflight.error?.message ?? `exit ${preflight.status}`}); ` +
+      "a provider startup failure will be caught when the run starts.",
+  );
+}
+
 
 // ---------------------------------------------------------------------------
 // Run, falling back through the model chain
@@ -594,7 +621,7 @@ const chainNote = modelChain.length > 1 ? ` (model chain: ${modelChain.join(", "
 if (final.providerFailure !== undefined) {
   fail(
     `pi-cliproxyapi-provider ${providerVersion ?? ""} failed to start: ${final.providerFailure.slice(0, 500)}. ` +
-      "No gateway model is usable; check .pi/settings.json in the checkout.",
+      "No gateway model is usable; check the provider's settings and config files in the checkout (.pi/).",
   );
 }
 // Quota first: a run killed by the timeout while pi waited out a quota retry is
