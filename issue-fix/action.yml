@@ -1,6 +1,6 @@
 name: 'Pi Issue Fix'
 description: 'On request, have Pi attempt a fix for a human-created issue and open it as a DRAFT pull request for a developer to finish.'
-author: 'hank-warren'
+author: 'fezcodev'
 
 branding:
   icon: 'tool'

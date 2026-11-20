@@ -10,7 +10,7 @@ name: acme-pi
 description: >-
   Posts pull request comments and reviews on behalf of Pi agent workflows,
   so agent output is attributed to its own bot rather than github-actions[bot].
-url: https://github.com/hank-warren/pi-action
+url: https://github.com/fezcodev/pi-action
 
 # This App only acts through short-lived installation tokens minted in CI.
 # It receives no events and needs no webhook endpoint.
