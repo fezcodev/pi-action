@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: hank-warren/pi-action/issue-triage@v1
+      - uses: fezcodev/pi-action/issue-triage@v1
         with:
           issue-number: ${{ github.event.issue.number || inputs.issue_number }}
           dry-run: ${{ inputs.dry_run || false }}
@@ -70,7 +70,7 @@ jobs:
       # Repo-specific: install what the agent needs to run the relevant tests,
       # e.g. `uv sync` or `npm ci`. Setup output must be gitignored.
 
-      - uses: hank-warren/pi-action/issue-fix@v1
+      - uses: fezcodev/pi-action/issue-fix@v1
         with:
           cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}

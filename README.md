@@ -18,7 +18,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: hank-warren/pi-action@v1
+      - uses: fezcodev/pi-action@v1
         with:
           skill: .github/skills/pr-review
           prompt: 'Review this PR per the skill.'
@@ -34,31 +34,24 @@ your App's `<app-slug>[bot]`, or `github-actions[bot]` without one (see [Bot ide
 
 ## PR review
 
-Pi posts one review per push: an approval for a clean PR, or "request changes" with `path:line`
-findings. Older Pi reviews on the PR are collapsed so only the newest stays expanded. The reusable
-workflow is the whole setup ([`examples/workflows/pi-review.yml`](examples/workflows/pi-review.yml)):
+`fezcodev/pi-action/pr-review@v1` posts one review per push: an approval for a clean PR, or
+"request changes" with `path:line` findings. Older Pi reviews on the PR are collapsed so only the
+newest stays expanded. Copy [`examples/workflows/pi-review.yml`](examples/workflows/pi-review.yml)
+into `.github/workflows/`:
 
 ```yaml
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, edited]
-permissions:
-  contents: read
-  pull-requests: write
-jobs:
-  pi-review:
-    uses: hank-warren/pi-action/.github/workflows/pr-review.yml@v1
-    secrets:
-      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}  # gateway URL: vars.CLIPROXYAPI_BASE_URL
+- uses: actions/checkout@v4
+  with:
+    persist-credentials: false
+- uses: fezcodev/pi-action/pr-review@v1
+  with:
+    cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
+    cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
 ```
 
-It skips fork and bot PRs, reruns when the PR is retargeted (`edited` with a base change), cancels a
-superseded run, and runs `pr-review` from the same commit as
-the workflow, whatever ref the caller pins. Its inputs are `pr-review`'s, minus identity and `tools` (always read-only), plus
-`cliproxyapi-base-url`, `runs-on` and `job-timeout-minutes`. Pass only the gateway key, not
-`secrets: inherit`, which would hand the workflow every repository secret. For an App identity or more control, use the
-`hank-warren/pi-action/pr-review@v1` action in your own job after `actions/checkout` with
-`persist-credentials: false`.
+The example's job runs on same-repo, human-authored PRs only, reruns when a PR is retargeted, and
+cancels a superseded run. To share one review setup across an organization's repos, wrap this job
+in a reusable workflow in a repository of your own and keep your defaults there.
 
 - **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
   unavailable model, with `thinking: high`. Out of quota on both posts nothing and exits 0.
@@ -92,8 +85,8 @@ workflow. See [`examples/workflows/pi-issues.yml`](examples/workflows/pi-issues.
 
 | Action | When | What lands |
 |---|---|---|
-| `hank-warren/pi-action/issue-triage@v1` | A human opens an issue (or manual dispatch) | Existing labels, one triage comment edited in place, at most `max-new-issues` follow-up issues |
-| `hank-warren/pi-action/issue-fix@v1` | A human adds `pi:fix` | A **draft** PR from `pi/issue-<n>` against the default branch, or a comment explaining why not |
+| `fezcodev/pi-action/issue-triage@v1` | A human opens an issue (or manual dispatch) | Existing labels, one triage comment edited in place, at most `max-new-issues` follow-up issues |
+| `fezcodev/pi-action/issue-fix@v1` | A human adds `pi:fix` | A **draft** PR from `pi/issue-<n>` against the default branch, or a comment explaining why not |
 
 The triage comment covers root cause with `file:line` evidence, which shipped `release/*` lines are
 affected, related issues and PRs, a suggested fix, and a Mermaid diagram when a flow is worth drawing.
@@ -194,7 +187,7 @@ Like `claude-code-action` posting as `claude[bot]`, this action posts as its own
 when given one:
 
 ```yaml
-- uses: hank-warren/pi-action@v1
+- uses: fezcodev/pi-action@v1
   with:
     app-client-id: ${{ vars.PI_APP_CLIENT_ID }}
     app-private-key: ${{ secrets.PI_APP_PRIVATE_KEY }}
@@ -214,7 +207,7 @@ recorded in [`app-manifest.yml`](app-manifest.yml).
 ## Model fallback
 
 ```yaml
-- uses: hank-warren/pi-action@v1
+- uses: fezcodev/pi-action@v1
   with:
     model: cpa/claude-opus-5-5
     fallback-models: cpa/gpt-6.2-sol
@@ -263,7 +256,7 @@ With `on-rate-limit: skip` the step exits 0, emits a warning annotation, and set
 `rate-limited: true`:
 
 ```yaml
-- uses: hank-warren/pi-action@v1
+- uses: fezcodev/pi-action@v1
   id: pi
   with:
     on-rate-limit: skip
@@ -325,3 +318,6 @@ node --check runner.mjs
 CI runs a syntax check, an action.yml wiring check, the gateway-only env guard and the provider
 snapshot contract check on every push. The end-to-end smoke test is `workflow_dispatch` only, because
 it spends real quota.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and releases, and [SECURITY.md](SECURITY.md) to
+report a vulnerability.

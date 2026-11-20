@@ -1,6 +1,6 @@
 name: 'Pi Issue Triage'
 description: 'Triage a human-created issue with Pi: investigate read-only, then apply existing labels and one triage comment.'
-author: 'hank-warren'
+author: 'fezcodev'
 
 branding:
   icon: 'search'

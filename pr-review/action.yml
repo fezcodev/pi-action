@@ -1,6 +1,6 @@
 name: 'Pi PR Review'
 description: 'Review a pull request with Pi and post one review: approve or request changes (or a plain comment), collapsing its older reviews.'
-author: 'hank-warren'
+author: 'fezcodev'
 
 branding:
   icon: 'eye'

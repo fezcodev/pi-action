@@ -1,6 +1,6 @@
 name: 'Pi Agent'
 description: 'Run the Pi coding agent headlessly in CI through CLIProxyAPI. Generic, skill-driven replacement for claude-code-action.'
-author: 'hank-warren'
+author: 'fezcodev'
 
 branding:
   icon: 'cpu'

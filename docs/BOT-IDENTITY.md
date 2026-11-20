@@ -30,7 +30,7 @@ Use exactly the settings in [`app-manifest.yml`](../app-manifest.yml):
 | Field | Value |
 |---|---|
 | Name | e.g. `acme-pi` (produces `acme-pi[bot]`) |
-| Homepage URL | `https://github.com/hank-warren/pi-action` (or your own) |
+| Homepage URL | `https://github.com/fezcodev/pi-action` (or your own) |
 | Webhook | **Uncheck Active** — this App never receives events |
 | Repository permissions → Pull requests | **Read and write** |
 | Repository permissions → Contents | **Read and write** |
@@ -84,7 +84,7 @@ set both per repository with `gh variable set` / `gh secret set -R <owner>/<repo
 Two inputs:
 
 ```yaml
-- uses: hank-warren/pi-action@v1
+- uses: fezcodev/pi-action@v1
   with:
     app-client-id: ${{ vars.PI_APP_CLIENT_ID }}
     app-private-key: ${{ secrets.PI_APP_PRIVATE_KEY }}
