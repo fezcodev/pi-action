@@ -97,7 +97,7 @@ inputs:
   pi-version:
     description: 'Pinned @earendil-works/pi-coding-agent version.'
     required: false
-    default: '1.5.2'
+    default: '1.6.0'
   provider-extension-version:
     description: 'Pinned @hank-warren/pi-cliproxyapi-provider version.'
     required: false
