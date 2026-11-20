@@ -16,8 +16,11 @@ Older tags are not patched.
 
 ## Trust model
 
-- Run the action on `pull_request`, never on `pull_request_target` with the PR's code checked out.
-  Fork PRs get no secrets under `pull_request`, and a same-repository author can already read them.
+- Run the action on `pull_request`, never on `pull_request_target` with the PR's code checked out,
+  and gate jobs that receive credentials to same-repository PRs
+  (`github.event.pull_request.head.repo.full_name == github.repository`), as the examples do.
+  Private repositories can opt into sending secrets to fork PR workflows, so the trigger alone is
+  not the boundary.
 - The agent can read its own process environment, which holds the gateway key. The runner redacts
   the key and the agent's GitHub token from the transcript, outputs, step summary and stderr, but a
   model can re-encode a value it has seen.

@@ -36,10 +36,18 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must be X.Y.Z, got '${VERSION}'"; exit 1; }
           tag="v${VERSION}"
           major="v${VERSION%%.*}"
+          head="$(git rev-parse HEAD)"
+          # A rerun resumes a release whose tag already points here; a tag elsewhere is refused.
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "::error::${tag} already exists"; exit 1
+            [ "$(git rev-parse "${tag}^{commit}")" = "$head" ] \
+              || { echo "::error::${tag} already exists on another commit"; exit 1; }
           fi
-          previous="$(git describe --tags --abbrev=0 --match 'v*.*.*' 2>/dev/null || true)"
+          # Never move the major tag backwards (a stale rerun after a newer release).
+          if git rev-parse -q --verify "refs/tags/${major}" >/dev/null \
+              && ! git merge-base --is-ancestor "$(git rev-parse "${major}^{commit}")" "$head"; then
+            echo "::error::${major} is ahead of this commit; refusing to move it back"; exit 1
+          fi
+          previous="$(git describe --tags --abbrev=0 --match 'v*.*.*' --exclude "$tag" 2>/dev/null || true)"
           { echo "tag=${tag}"; echo "major=${major}"; echo "previous=${previous}"; } >> "$GITHUB_OUTPUT"
 
       - name: Tag and release
@@ -52,11 +60,15 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "refs/tags/${TAG}"
-          args=(--verify-tag --title "$TAG" --generate-notes)
-          [ -n "$PREVIOUS" ] && args+=(--notes-start-tag "$PREVIOUS")
-          gh release create "$TAG" "${args[@]}"
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "refs/tags/${TAG}"
+          fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            args=(--verify-tag --title "$TAG" --generate-notes)
+            [ -n "$PREVIOUS" ] && args+=(--notes-start-tag "$PREVIOUS")
+            gh release create "$TAG" "${args[@]}"
+          fi
           git tag -f "$MAJOR" "$TAG^{}"
           git push -f origin "refs/tags/${MAJOR}"
           echo "Released ${TAG}; ${MAJOR} -> $(git rev-parse --short "$TAG^{}")" >> "$GITHUB_STEP_SUMMARY"
