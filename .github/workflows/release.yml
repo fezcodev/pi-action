@@ -47,7 +47,8 @@ jobs:
               && ! git merge-base --is-ancestor "$(git rev-parse "${major}^{commit}")" "$head"; then
             echo "::error::${major} is ahead of this commit; refusing to move it back"; exit 1
           fi
-          old_major="$(git rev-parse -q --verify "refs/tags/${major}^{commit}" || true)"
+          # Raw ref value (a tag object if annotated): what --force-with-lease compares.
+          old_major="$(git rev-parse -q --verify "refs/tags/${major}" || true)"
           previous="$(git describe --tags --abbrev=0 --match 'v*.*.*' --exclude "$tag" 2>/dev/null || true)"
           { echo "tag=${tag}"; echo "major=${major}"; echo "previous=${previous}"; echo "old_major=${old_major}"; } >> "$GITHUB_OUTPUT"
 
