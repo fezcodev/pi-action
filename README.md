@@ -165,7 +165,7 @@ the runner writes.
 | `app-repositories` | — | Repositories the minted App token may access (names within the owner, comma- or newline-separated). Empty keeps every repository the App is installed on. |
 | `github-token` | — | Explicit `GH_TOKEN` for the agent. Mutually exclusive with `app-client-id`. |
 | `working-directory` | `.` | Directory the agent runs in. |
-| `pi-version` | `1.5.2` | Pinned Pi version. |
+| `pi-version` | `1.6.0` | Pinned Pi version. |
 | `provider-extension-version` | `0.6.0` | Pinned `@hank-warren/pi-cliproxyapi-provider` version. |
 | `upload-transcript` | `true` | Upload the JSONL transcript as an artifact. |
 | `transcript-name` | `pi-session` | Artifact name. |
