@@ -47,8 +47,9 @@ jobs:
               && ! git merge-base --is-ancestor "$(git rev-parse "${major}^{commit}")" "$head"; then
             echo "::error::${major} is ahead of this commit; refusing to move it back"; exit 1
           fi
+          old_major="$(git rev-parse -q --verify "refs/tags/${major}^{commit}" || true)"
           previous="$(git describe --tags --abbrev=0 --match 'v*.*.*' --exclude "$tag" 2>/dev/null || true)"
-          { echo "tag=${tag}"; echo "major=${major}"; echo "previous=${previous}"; } >> "$GITHUB_OUTPUT"
+          { echo "tag=${tag}"; echo "major=${major}"; echo "previous=${previous}"; echo "old_major=${old_major}"; } >> "$GITHUB_OUTPUT"
 
       - name: Tag and release
         env:
@@ -56,6 +57,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           MAJOR: ${{ steps.version.outputs.major }}
           PREVIOUS: ${{ steps.version.outputs.previous }}
+          OLD_MAJOR: ${{ steps.version.outputs.old_major }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -70,5 +72,6 @@ jobs:
             gh release create "$TAG" "${args[@]}"
           fi
           git tag -f "$MAJOR" "$TAG^{}"
-          git push -f origin "refs/tags/${MAJOR}"
+          # Only replace the major tag if nobody moved it since the ancestry check.
+          git push --force-with-lease="refs/tags/${MAJOR}:${OLD_MAJOR}" origin "refs/tags/${MAJOR}"
           echo "Released ${TAG}; ${MAJOR} -> $(git rev-parse --short "$TAG^{}")" >> "$GITHUB_STEP_SUMMARY"
