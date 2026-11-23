@@ -54,10 +54,11 @@ cancels a superseded run. To share one review setup across an organization's rep
 in a reusable workflow in a repository of your own and keep your defaults there.
 
 - **Models:** `cpa/gpt-6.2-sol`, falling back to `cpa/claude-opus-5-5` on quota exhaustion or an
-  unavailable model, with `thinking: high`. Out of quota on both posts nothing and exits 0.
-- **The agent never writes to GitHub, or to disk.** The action prefetches the PR's metadata, diff and
-  earlier reviews into files; the agent reads those and the checkout with read-only tools
-  (`read,grep,find,ls`) and answers with a verdict plus a review body. A deterministic step posts
+  unavailable model, with `thinking: medium`. Out of quota on both posts nothing and exits 0.
+- **The agent never writes to GitHub, or to disk.** The action prefetches the PR's metadata, diff,
+  earlier reviews and conversation comments into files; the agent reads those and the checkout with
+  read-only tools (`read,grep,find,ls`) and answers with a verdict (an approval, optionally with
+  brief non-blocking notes, or "request changes" with findings). A deterministic step posts
   exactly one review, pinned to the reviewed commit. With no `write` or `bash`, prompt-injected PR
   text cannot alter that step or reach the gateway key.
 - **Reviews the commit on disk.** When the PR's head has moved past the checked-out `head-sha` (a

@@ -52,18 +52,33 @@ test("planReview rejects anything but the two verdicts", () => {
   assert.throws(() => planReview({}, "verdict"), /verdict must be/);
 });
 
-test("buildBody keeps approvals to one line and ignores the report", () => {
-  const body = buildBody({ verdict: "approve", report: "I checked everything.", model: "cpa/gpt-6.2-sol" });
-  assert.match(body, /^✅ No blocking issues\.\n/);
-  assert.doesNotMatch(body, /checked everything/);
-  assert.match(body, /`gpt-6\.2-sol`/);
-  assert.ok(body.trimEnd().endsWith(REVIEW_MARKER));
+test("buildBody keeps clean approvals to one line and preserves optional non-blocking notes", () => {
+  const clean = buildBody({ verdict: "approve", report: "   ", model: "cpa/gpt-6.2-sol" });
+  assert.match(clean, /^✅ No blocking issues\.\n\n<sub>/);
+  assert.match(clean, /`gpt-6\.2-sol`/);
+  assert.ok(clean.trimEnd().endsWith(REVIEW_MARKER));
+
+  const noted = buildBody({
+    verdict: "approve",
+    report: "**Notes**\n\n- `a.js:12`: minor nit worth knowing.",
+    model: "cpa/gpt-6.2-sol",
+  });
+  assert.match(noted, /^✅ No blocking issues\.\n\n\*\*Notes\*\*\n\n- `a\.js:12`: minor nit worth knowing\.\n\n<sub>/);
+  assert.ok(noted.trimEnd().endsWith(REVIEW_MARKER));
+
+  const huge = buildBody({ verdict: "approve", report: "x".repeat(65000), model: "cpa/gpt-6.2-sol" });
+  assert.ok(huge.length < 65536);
+  assert.match(huge, /truncated/);
 });
 
 test("buildBody does not vouch for a PR whose full diff was unavailable", () => {
   const body = buildBody({ verdict: "approve", report: "", model: "", partial: true });
   assert.match(body, /not an approval/);
   assert.doesNotMatch(body, /✅/);
+
+  const noted = buildBody({ verdict: "approve", report: "**Notes**\n\n- Check the skipped lockfile.", model: "", partial: true });
+  assert.match(noted, /not an approval/);
+  assert.match(noted, /Check the skipped lockfile/);
 });
 
 test("buildBody carries findings and refuses an empty blocking review", () => {
