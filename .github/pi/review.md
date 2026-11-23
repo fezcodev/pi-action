@@ -1,7 +1,7 @@
 # Review guidance for pi-action
 
 This repo is a set of composite GitHub Actions (`action.yml`, `issue-triage/`, `issue-fix/`,
-`pr-review/`) around one zero-dependency Node runner (`runner.mjs`). Other repos pin it by tag, so a
+`pr-review/`, `pr-review-fusion/`) around one zero-dependency Node runner (`runner.mjs`). Other repos pin it by tag, so a
 regression ships to every consumer on the next tag move.
 
 Blocking, in this repo:
@@ -10,8 +10,8 @@ Blocking, in this repo:
   directly into a `run:` script. Untrusted values must reach scripts through `env:`.
 - **Credential exposure.** The gateway key or a GitHub token reaching the agent when it should not,
   appearing in logs or step summaries, or `runner.mjs` setting `ANTHROPIC_*`/`OPENAI_*` credentials.
-  Agents in `issue-triage`, `issue-fix` and `pr-review` must never hold a write token, and the
-  `pr-review` agent's default tools must stay read-only (a write tool could rewrite the post step).
+  Agents in `issue-triage`, `issue-fix`, `pr-review` and `pr-review-fusion` must never hold a write token, and the
+  `pr-review` / `pr-review-fusion` agents' default tools must stay read-only (a write tool could rewrite the post step).
 - **Wiring drift.** A `PI_ACTION_*` variable the runner reads that some `action.yml` does not pass,
   or `pi-version` / `provider-extension-version` defaults that differ between actions.
 - **Apply-step limits.** Anything that lets agent output bypass the deterministic limits: draft-only

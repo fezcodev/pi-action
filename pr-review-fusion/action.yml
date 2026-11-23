@@ -1,0 +1,418 @@
+name: 'Pi PR Review Fusion'
+description: 'Run multiple gateway models in parallel on a pull request, skeptically verify and synthesize their findings, and post one review.'
+author: 'fezcodev'
+
+branding:
+  icon: 'layers'
+  color: 'purple'
+
+# Parallel multi-model review on a single runner:
+# 1. Prefetches PR metadata, diff, reviews, conversation comments, and repo guidance once.
+# 2. Runs each model in `models` concurrently in isolated read-only sessions (with reordered
+#    diff file order for slots >= 1 to reduce shared attention bias).
+# 3. Short-circuits with zero judge calls when all surviving reviewers approve cleanly or only
+#    one reviewer survives; otherwise runs an anonymized skeptical verifier pass (`judge-model`)
+#    to deduplicate consensus findings, verify single-reviewer claims against disk, drop false
+#    positives, and downgrade minor caveats to non-blocking notes.
+# 4. Mints a write token only after all agents exit and posts one review via pr-review/apply.mjs.
+
+inputs:
+  cliproxyapi-api-key:
+    description: 'CLIProxyAPI client key. Required.'
+    required: true
+  cliproxyapi-base-url:
+    description: 'CLIProxyAPI OpenAI-compatible base URL, including /v1, e.g. https://cpa.example.com/v1. Must be reachable from the runner.'
+    required: true
+  pr-number:
+    description: 'Pull request to review.'
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  head-sha:
+    description: >-
+      Head commit the checkout was made from. The review is skipped when the PR's live head differs,
+      so the files on disk always match the diff being reviewed. Empty uses the triggering PR's head
+      when reviewing that PR, and skips the check for any other.
+    required: false
+    default: ''
+  base-ref:
+    description: >-
+      Base branch the checkout was merged against. The review is skipped when the PR has since been
+      retargeted. Empty uses the triggering PR's base when reviewing that PR, and skips the check for
+      any other.
+    required: false
+    default: ''
+  repository:
+    description: 'owner/name of the pull request''s repository. The checkout in the working directory must be this repository.'
+    required: false
+    default: ${{ github.repository }}
+  mode:
+    description: >-
+      `verdict` (default) approves a clean PR and requests changes on one with findings.
+      `comment` posts the same review as a plain COMMENT that never blocks a merge.
+    required: false
+    default: 'verdict'
+  instructions:
+    description: >-
+      Inline review instructions (what matters, what to ignore). Appended after instructions-file
+      when both are present.
+    required: false
+    default: ''
+  instructions-file:
+    description: >-
+      Repository-relative path to a markdown file with review instructions, read from the PR's base
+      branch. Fails the step if explicitly set and missing. When unset, `.github/pi/review.md` is
+      loaded automatically if present on the base branch.
+    required: false
+    default: ''
+  github-token:
+    description: >-
+      Token that posts the review (needs pull-requests: write), used when no App is configured. The
+      agent never receives it. Approving with GITHUB_TOKEN needs the repo setting "Allow GitHub
+      Actions to create and approve pull requests"; without it an approval is posted as a comment.
+    required: false
+    default: ${{ github.token }}
+  app-client-id:
+    description: 'GitHub App Client ID. When set, the review posts as <app-slug>[bot]; an agent given bash also gets a read-only App token for gh.'
+    required: false
+    default: ''
+  app-private-key:
+    description: 'GitHub App private key. Required when app-client-id is set.'
+    required: false
+    default: ''
+  dry-run:
+    description: 'Run the reviewers and synthesizer but post nothing; the planned review goes to the step summary.'
+    required: false
+    default: 'false'
+  models:
+    description: >-
+      Gateway models to run in parallel, comma- or newline-separated. Use distinct model lineages
+      (e.g. OpenAI + Anthropic) so blind spots decorrelate.
+    required: false
+    default: |
+      cpa/gpt-6.2-sol
+      cpa/claude-opus-5-5
+  judge-model:
+    description: 'Gateway model for the skeptical synthesizer pass when 2+ reviewers produce findings or notes.'
+    required: false
+    default: 'cpa/claude-opus-5-5'
+  judge-fallback-models:
+    description: 'Ordered fallback gateway models for the synthesizer pass, comma- or newline-separated.'
+    required: false
+    default: 'cpa/gpt-6.2-sol'
+  thinking:
+    description: 'Thinking level for each parallel reviewer.'
+    required: false
+    default: 'medium'
+  judge-thinking:
+    description: 'Thinking level for the synthesizer pass.'
+    required: false
+    default: 'medium'
+  message-threads:
+    description: >-
+      `true` sends Claude turns as Anthropic message threads: after the first request, each turn
+      sends only the new messages. Needs CLIProxyAPI v8.0.76 or later.
+    required: false
+    default: 'false'
+  tools:
+    description: >-
+      Agent tool allowlist for reviewers and synthesizer. The default is read-only: everything the
+      review needs is prefetched. Adding bash exposes the gateway key to commands the model runs,
+      and bash or write lets prompt-injected PR text alter the post step that runs with the write
+      token. Widen it only for trusted PRs.
+    required: false
+    default: 'read,grep,find,ls'
+  max-turns:
+    description: 'Assistant turn cap per parallel reviewer.'
+    required: false
+    default: '40'
+  judge-max-turns:
+    description: 'Assistant turn cap for the synthesizer pass.'
+    required: false
+    default: '25'
+  timeout-minutes:
+    description: 'Wall-clock limit per agent run (reviewers run concurrently).'
+    required: false
+    default: '20'
+  on-rate-limit:
+    description: '`skip` (default) posts nothing and exits 0 when every reviewer model is in quota cooldown; `fail` fails the step.'
+    required: false
+    default: 'skip'
+  pi-version:
+    description: 'Pinned @earendil-works/pi-coding-agent version.'
+    required: false
+    default: '1.6.0'
+  provider-extension-version:
+    description: 'Pinned @hank-warren/pi-cliproxyapi-provider version.'
+    required: false
+    default: '0.6.0'
+  upload-transcript:
+    description: 'Upload the JSONL session transcripts (reviewers and synthesizer) as an artifact.'
+    required: false
+    default: 'true'
+  working-directory:
+    description: 'Directory holding the pull request checkout, where the agents run.'
+    required: false
+    default: '.'
+
+outputs:
+  skipped:
+    description: '`true` when nothing ran (closed PR, bot-authored PR, or the head moved past head-sha).'
+    value: ${{ steps.gate.outputs.run != 'true' }}
+  verdict:
+    description: '`approve` or `request-changes`, as judged by the fused review.'
+    value: ${{ steps.apply.outputs.verdict }}
+  event:
+    description: 'Review event actually posted: APPROVE, REQUEST_CHANGES or COMMENT.'
+    value: ${{ steps.apply.outputs.event }}
+  review-url:
+    description: 'URL of the posted review.'
+    value: ${{ steps.apply.outputs.review-url }}
+  model-used:
+    description: 'Formatted model label for the posted review (e.g. gpt-6.2-sol + claude-opus-5-5).'
+    value: ${{ steps.pi.outputs.model-used }}
+  models-used:
+    description: 'Comma-separated list of reviewer models that succeeded.'
+    value: ${{ steps.pi.outputs.models-used }}
+  rate-limited:
+    description: '`true` when every reviewer model was in gateway quota cooldown.'
+    value: ${{ steps.pi.outputs.rate-limited }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check inputs
+      id: inputs
+      shell: bash
+      env:
+        PI_REPO: ${{ inputs.repository }}
+        MODE: ${{ inputs.mode }}
+        APP_ID: ${{ inputs.app-client-id }}
+        APP_KEY: ${{ inputs.app-private-key }}
+      run: |
+        set -euo pipefail
+        case "$MODE" in verdict|comment) ;; *) echo "::error title=pi-pr-review-fusion::mode must be verdict or comment, got '${MODE}'."; exit 1 ;; esac
+        if [ -n "$APP_ID" ] && [ -z "$APP_KEY" ]; then
+          echo "::error title=pi-pr-review-fusion::app-private-key is required with app-client-id."; exit 1
+        fi
+        [[ "$PI_REPO" == */* ]] || { echo "::error title=pi-pr-review-fusion::repository must be owner/name, got '${PI_REPO}'."; exit 1; }
+        { echo "owner=${PI_REPO%%/*}"; echo "name=${PI_REPO#*/}"; } >> "$GITHUB_OUTPUT"
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    # Validate tools, model lists, and instructions-file before minting any GitHub App token.
+    - name: Check tools, models and instructions-file
+      shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+        PI_INSTRUCTIONS_FILE: ${{ inputs.instructions-file }}
+        PI_FUSION_MODELS: ${{ inputs.models }}
+        PI_FUSION_JUDGE_MODEL: ${{ inputs.judge-model }}
+        PI_FUSION_JUDGE_FALLBACK_MODELS: ${{ inputs.judge-fallback-models }}
+      run: |
+        set -euo pipefail
+        node -e 'if (!process.env.TOOLS.split(",").some((t) => t.trim())) process.exit(1)' \
+          || { echo "::error title=pi-pr-review-fusion::tools must name at least one tool."; exit 1; }
+        node "${{ github.action_path }}/../pr-review/fetch-guidance.mjs" --validate
+        node "${{ github.action_path }}/fusion.mjs" --validate
+
+    # The write token is minted only after all agents exit: read-only tools are no filesystem
+    # sandbox, and a token minted earlier sits in runner files an agent could read.
+    - name: Mint App read-only token
+      id: read-token
+      if: ${{ inputs.app-client-id != '' }}
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ steps.inputs.outputs.owner }}
+        repositories: ${{ steps.inputs.outputs.name }}
+        skip-token-revoke: ${{ !contains(inputs.tools, 'bash') }}
+        permission-contents: read
+        permission-issues: read
+        permission-pull-requests: read
+
+    - name: Fetch the pull request
+      id: gate
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.read-token.outputs.token || inputs.github-token }}
+        PI_REPO: ${{ inputs.repository }}
+        PI_PR: ${{ inputs.pr-number }}
+        PI_EXPECTED_SHA: ${{ inputs.head-sha }}
+        PI_EXPECTED_BASE: ${{ inputs.base-ref }}
+        PI_EVENT_PR: ${{ github.event.pull_request.number }}
+        PI_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+        PI_EVENT_BASE: ${{ github.event.pull_request.base.ref }}
+        PI_INSTRUCTIONS: ${{ inputs.instructions }}
+        PI_INSTRUCTIONS_FILE: ${{ inputs.instructions-file }}
+      run: |
+        set -euo pipefail
+        if [ "$PI_REPO" = "$GITHUB_REPOSITORY" ] && [ "$PI_PR" = "$PI_EVENT_PR" ]; then
+          PI_EXPECTED_SHA="${PI_EXPECTED_SHA:-$PI_EVENT_SHA}"
+          PI_EXPECTED_BASE="${PI_EXPECTED_BASE:-$PI_EVENT_BASE}"
+        elif [ -n "$PI_EVENT_PR" ] && [ -z "$PI_EXPECTED_SHA" ]; then
+          echo "::error title=pi-pr-review-fusion::Reviewing #${PI_PR} from a pull_request run for #${PI_EVENT_PR} needs head-sha for the checkout you made."; exit 1
+        fi
+        [[ "$PI_PR" =~ ^[0-9]+$ ]] || { echo "::error title=pi-pr-review-fusion::pr-number must be a number, got '${PI_PR}'."; exit 1; }
+        work="${RUNNER_TEMP}/pi-pr-review-fusion"
+        rm -rf "$work" && mkdir -p "$work/in"
+        gh api "repos/${PI_REPO}/pulls/${PI_PR}" --jq '{number, title, body, state, draft,
+          author: .user.login, author_type: .user.type, base: .base.ref, head: .head.ref,
+          head_sha: .head.sha, base_sha: .base.sha, additions, deletions, changed_files}' > "$work/in/pr.json"
+        IFS=$'\t' read -r state type login sha < <(jq -r '[.state, .author_type, .author, .head_sha] | @tsv' "$work/in/pr.json")
+        run=true
+        partial=false
+        if [ "$state" != "open" ]; then
+          run=false; echo "::notice title=pi-pr-review-fusion::Skipping #${PI_PR}: it is ${state}."
+        elif [ "$type" != "User" ]; then
+          run=false; echo "::notice title=pi-pr-review-fusion::Skipping #${PI_PR}: opened by ${login} (${type}); Pi reviews human-authored PRs only."
+        elif [ -n "$PI_EXPECTED_SHA" ] && [ "$PI_EXPECTED_SHA" != "$sha" ]; then
+          run=false; echo "::notice title=pi-pr-review-fusion::Skipping #${PI_PR}: head is ${sha:0:7}, not the checked-out ${PI_EXPECTED_SHA:0:7}; the run for the newer push reviews it."
+        elif [ -n "$PI_EXPECTED_BASE" ] && [ "$PI_EXPECTED_BASE" != "$(jq -r .base "$work/in/pr.json")" ]; then
+          run=false; echo "::notice title=pi-pr-review-fusion::Skipping #${PI_PR}: it now targets $(jq -r .base "$work/in/pr.json"), not the checked-out ${PI_EXPECTED_BASE}."
+        fi
+        if [ "$run" = "true" ]; then
+          gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/files?per_page=100" \
+            --jq '.[] | {filename, status, additions, deletions, previous_filename, patch}' \
+            | jq -s . > "$work/in/files.json"
+          if ! gh api "repos/${PI_REPO}/pulls/${PI_PR}" -H 'Accept: application/vnd.github.diff' > "$work/in/diff.patch" 2>/dev/null; then
+            partial=true
+            echo "::warning title=pi-pr-review-fusion::Full diff unavailable; using per-file patches (very large files may be missing)."
+            jq -r '.[] | "--- \(.previous_filename // .filename)\n+++ \(.filename)\n\(.patch // "(no textual patch: binary or too large)")\n"' \
+              "$work/in/files.json" > "$work/in/diff.patch"
+          fi
+          gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/reviews?per_page=100" \
+            --jq '.[] | {author: .user.login, author_type: .user.type, author_association, state, submitted_at, commit_id, body}' | jq -s . > "$work/in/reviews.json"
+          gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/comments?per_page=100" \
+            --jq '.[] | {author: .user.login, author_type: .user.type, author_association, path, line, body, created_at}' | jq -s . > "$work/in/review-comments.json"
+          if ! (gh api --paginate "repos/${PI_REPO}/issues/${PI_PR}/comments?per_page=100" \
+            --jq '.[] | {author: .user.login, author_type: .user.type, author_association, body, created_at}' | jq -s .) > "$work/in/issue-comments.json" 2>/dev/null; then
+            echo '[]' > "$work/in/issue-comments.json"
+            echo "::warning title=pi-pr-review-fusion::Could not fetch PR conversation comments; continuing without them."
+          fi
+          PI_BASE_SHA="$(jq -r .base_sha "$work/in/pr.json")" \
+          PI_BASE_REF="$(jq -r .base "$work/in/pr.json")" \
+          PI_GUIDANCE_OUT="$work/in/review-guidance.md" \
+          node "${{ github.action_path }}/../pr-review/fetch-guidance.mjs"
+        fi
+        {
+          echo "run=${run}"
+          echo "head-sha=${sha}"
+          echo "base-ref=$(jq -r .base "$work/in/pr.json")"
+          echo "partial-diff=${partial}"
+          echo "in=${work}/in"
+          echo "work=${work}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Revoke the read-only token
+      if: ${{ always() && steps.read-token.outputs.token != '' && !contains(inputs.tools, 'bash') }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.read-token.outputs.token }}
+      run: gh api -X DELETE installation/token --silent
+
+    - name: Check the checkout holds no credentials
+      if: ${{ steps.gate.outputs.run == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        if git config --includes --get-regexp '^http\..*extraheader$' >/dev/null 2>&1; then
+          echo "::error title=pi-pr-review-fusion::The checkout persisted its GitHub token, which the agent could read. Check out with persist-credentials: false."
+          exit 1
+        fi
+
+    - name: Install pi
+      if: ${{ steps.gate.outputs.run == 'true' }}
+      shell: bash
+      env:
+        PI_VERSION: ${{ inputs.pi-version }}
+        PROVIDER_EXTENSION_VERSION: ${{ inputs.provider-extension-version }}
+      run: bash "${{ github.action_path }}/../lib/install-pi.sh"
+
+    - name: Review and fuse with Pi
+      id: pi
+      if: ${{ steps.gate.outputs.run == 'true' }}
+      shell: bash
+      env:
+        # Forwarded to each isolated runner.mjs child process (model, prompt and skill are
+        # set per slot by fusion.mjs).
+        PI_ACTION_PROMPT: ''
+        PI_ACTION_PROMPT_FILE: ''
+        PI_ACTION_SKILL: ${{ github.action_path }}/../pr-review/skill
+        PI_ACTION_APPEND_SYSTEM_PROMPT: ''
+        PI_ACTION_MODEL: ${{ inputs.judge-model }}
+        PI_ACTION_FALLBACK_MODELS: ${{ inputs.judge-fallback-models }}
+        PI_ACTION_THINKING: ${{ inputs.thinking }}
+        PI_ACTION_MESSAGE_THREADS: ${{ inputs.message-threads }}
+        PI_ACTION_TOOLS: ${{ inputs.tools }}
+        PI_ACTION_MAX_TURNS: ${{ inputs.max-turns }}
+        PI_ACTION_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        PI_ACTION_ON_RATE_LIMIT: ${{ inputs.on-rate-limit }}
+        PI_ACTION_CPA_API_KEY: ${{ inputs.cliproxyapi-api-key }}
+        PI_ACTION_CPA_BASE_URL: ${{ inputs.cliproxyapi-base-url }}
+        PI_ACTION_EXTENSION_DIR: ${{ runner.temp }}/pi-ext
+        PI_ACTION_GH_TOKEN: ${{ contains(inputs.tools, 'bash') && steps.read-token.outputs.token || '' }}
+        PI_ACTION_BOT_LOGIN: ''
+        PI_ACTION_BOT_EMAIL: ''
+        PI_FUSION_MODELS: ${{ inputs.models }}
+        PI_FUSION_JUDGE_MODEL: ${{ inputs.judge-model }}
+        PI_FUSION_JUDGE_FALLBACK_MODELS: ${{ inputs.judge-fallback-models }}
+        PI_FUSION_JUDGE_THINKING: ${{ inputs.judge-thinking }}
+        PI_FUSION_JUDGE_MAX_TURNS: ${{ inputs.judge-max-turns }}
+        PI_FUSION_JUDGE_SKILL: ${{ github.action_path }}/skill
+        PI_FUSION_CONTEXT_DIR: ${{ steps.gate.outputs.in }}
+        PI_FUSION_WORK_DIR: ${{ steps.gate.outputs.work }}
+        PI_FUSION_REPO: ${{ inputs.repository }}
+        PI_FUSION_PR: ${{ inputs.pr-number }}
+        PI_FUSION_MODE: ${{ inputs.mode }}
+        GH_TOKEN: ''
+        GITHUB_TOKEN: ''
+      working-directory: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/fusion.mjs"
+
+    - name: Mint App write token
+      id: app-token
+      if: >-
+        ${{ inputs.app-client-id != '' && inputs.dry-run != 'true' && steps.gate.outputs.run == 'true' &&
+        steps.pi.outcome == 'success' && steps.pi.outputs.rate-limited != 'true' }}
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ steps.inputs.outputs.owner }}
+        repositories: ${{ steps.inputs.outputs.name }}
+        permission-contents: read
+        permission-pull-requests: write
+
+    - name: Post review
+      id: apply
+      if: ${{ steps.gate.outputs.run == 'true' && steps.pi.outcome == 'success' && steps.pi.outputs.rate-limited != 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
+        PI_REPO: ${{ inputs.repository }}
+        PI_PR: ${{ inputs.pr-number }}
+        PI_RESULT: ${{ steps.pi.outputs.result }}
+        PI_GUARDED_SECRETS: |
+          ${{ inputs.cliproxyapi-api-key }}
+          ${{ steps.read-token.outputs.token }}
+        PI_HEAD_SHA: ${{ steps.gate.outputs.head-sha }}
+        PI_BASE_REF: ${{ steps.gate.outputs.base-ref }}
+        PI_PARTIAL_DIFF: ${{ steps.gate.outputs.partial-diff }}
+        PI_REVIEW_MODE: ${{ inputs.mode }}
+        PI_DRY_RUN: ${{ inputs.dry-run }}
+        PI_MODEL_USED: ${{ steps.pi.outputs.model-used }}
+      run: node "${{ github.action_path }}/../pr-review/apply.mjs"
+
+    - name: Upload transcripts
+      if: ${{ always() && inputs.upload-transcript == 'true' && steps.pi.outputs.transcripts-dir != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: pi-review-fusion-${{ inputs.pr-number }}-${{ github.run_attempt }}
+        path: ${{ steps.pi.outputs.transcripts-dir }}
+        if-no-files-found: warn
+        retention-days: 30
