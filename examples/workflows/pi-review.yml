@@ -2,7 +2,7 @@ name: Pi Code Review
 
 # One approve-or-request-changes review per push, posted as github-actions[bot]
 # (or your App's bot). Older Pi reviews are collapsed. Optional repo guidance:
-# .github/pi/review.md, read from the base branch.
+# pass `instructions` / `instructions-file`, or add `.github/pi/review.md` on the base branch.
 # Needs the CLIPROXYAPI_API_KEY secret and CLIPROXYAPI_BASE_URL variable.
 
 on:
@@ -37,6 +37,9 @@ jobs:
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
           # Defaults: cpa/gpt-6.2-sol, falling back to cpa/claude-opus-5-5, thinking high,
           # read-only tools.
+          # instructions: |           # inline review guidance (appended after instructions-file)
+          #   Focus on backwards-compatible API changes and SQL migrations.
+          # instructions-file: .github/pi/review.md            # repo file on base branch (auto-loaded when unset)
           # mode: comment             # never approve or block, just comment
           # app-client-id: ${{ vars.PI_APP_CLIENT_ID }}        # post as your App instead of
           # app-private-key: ${{ secrets.PI_APP_PRIVATE_KEY }} # github-actions[bot]

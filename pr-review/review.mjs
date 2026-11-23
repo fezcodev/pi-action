@@ -4,6 +4,59 @@ import { footer, marker, truncate } from "../lib/common.mjs";
 
 export const REVIEW_MARKER = marker("pr-review");
 export const VERDICTS = new Set(["approve", "request-changes"]);
+export const DEFAULT_INSTRUCTIONS_FILE = ".github/pi/review.md";
+
+/**
+ * Validate and normalize a repository-relative guidance file path.
+ * Empty/whitespace returns ""; invalid paths throw so callers fail before calling the API.
+ */
+export function normalizeGuidancePath(raw) {
+  if (raw == null) return "";
+  if (typeof raw !== "string") throw new Error("instructions-file must be a string");
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) {
+    throw new Error("instructions-file must not contain control characters");
+  }
+  if (trimmed.includes("\\")) {
+    throw new Error("instructions-file must use '/' path separators");
+  }
+  if (trimmed.startsWith("/") || trimmed.endsWith("/")) {
+    throw new Error("instructions-file must be a repository-relative file path");
+  }
+  const segments = trimmed.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error("instructions-file must not contain empty, '.' or '..' path segments");
+  }
+  return segments.join("/");
+}
+
+/** Percent-encode each segment of a validated repo-relative path for the GitHub Contents API. */
+export function encodeGuidancePath(normalizedPath) {
+  return normalizedPath.split("/").map(encodeURIComponent).join("/");
+}
+
+/**
+ * Decode a GitHub Contents API JSON payload for a guidance file.
+ * Returns the UTF-8 text, or `null` when GitHub omits inline content (`encoding: "none"`, >1 MB)
+ * so the caller can fetch the raw file body. Throws for directories, symlinks, or submodules.
+ */
+export function decodeContentsFile(payload, filePath) {
+  if (!payload || Array.isArray(payload) || payload.type !== "file") {
+    throw new Error(`'${filePath}' is not a regular file`);
+  }
+  if (payload.encoding === "base64" && typeof payload.content === "string") {
+    return Buffer.from(payload.content, "base64").toString("utf8");
+  }
+  if (payload.encoding === "none") return null;
+  throw new Error(`'${filePath}' returned unsupported content encoding '${payload.encoding ?? ""}'`);
+}
+
+/** Combine file-based and inline review instructions into one markdown document. */
+export function combineGuidance(fileText, inlineText) {
+  const parts = [fileText, inlineText].map((value) => String(value ?? "").trim()).filter(Boolean);
+  return parts.length ? `${parts.join("\n\n")}\n` : "";
+}
 
 /**
  * Parse the agent's final message: a `VERDICT: <verdict>` line, then the review

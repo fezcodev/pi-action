@@ -21,7 +21,7 @@ jobs:
       - name: Syntax check scripts
         run: |
           set -euo pipefail
-          for file in runner.mjs lib/*.mjs */apply.mjs pr-review/review.mjs; do node --check "$file"; done
+          for file in runner.mjs lib/*.mjs */apply.mjs pr-review/*.mjs; do node --check "$file"; done
 
       - name: Unit tests
         run: node --test

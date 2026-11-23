@@ -10,7 +10,7 @@
 ## Checks
 
 ```bash
-for f in runner.mjs lib/*.mjs */apply.mjs pr-review/review.mjs; do node --check "$f"; done
+for f in runner.mjs lib/*.mjs */apply.mjs pr-review/*.mjs; do node --check "$f"; done
 node --test
 ```
 
