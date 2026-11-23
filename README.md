@@ -82,6 +82,37 @@ in a reusable workflow in a repository of your own and keep your defaults there.
   the file. The skill reads this alongside `AGENTS.md`/`CLAUDE.md`. `dry-run: true` writes the
   planned review to the step summary instead.
 
+## PR review fusion
+
+`fezcodev/pi-action/pr-review-fusion@v1` runs multiple gateway models in parallel (default
+`cpa/gpt-6.2-sol` and `cpa/claude-opus-5-5` at `thinking: medium`) in isolated read-only sessions
+on one runner, then synthesizes their findings into a single review. Copy
+[`examples/workflows/pi-review-fusion.yml`](examples/workflows/pi-review-fusion.yml) into
+`.github/workflows/`:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    persist-credentials: false
+- uses: fezcodev/pi-action/pr-review-fusion@v1
+  with:
+    cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
+    cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
+```
+
+- **Independent parallel passes:** each reviewer runs with its own `HOME` and temp directory to
+  prevent cache and output collisions (same runner/OS user, not a filesystem sandbox); reviewers
+  after the first receive a deterministically reordered `diff.patch` so they do not fixate on the
+  same first file.
+- **Short-circuit fast path:** unanimous clean approvals skip synthesis completely (zero judge
+  calls). If one model hits gateway quota cooldown or fails, the surviving reviewer posts cleanly.
+- **Skeptical verifier synthesis:** when 2+ reviewers survive and at least one raises a finding or
+  note, `judge-model` (default `cpa/claude-opus-5-5`, falling back to `cpa/gpt-6.2-sol`) reads
+  anonymized reports (`Reviewer A`, `Reviewer B`, ...) using
+  [`pr-review-fusion/skill/SKILL.md`](pr-review-fusion/skill/SKILL.md), verifies claims directly
+  against the checkout, drops false positives, downgrades minor caveats to non-blocking `**Notes**`,
+  and posts one review via the same deterministic `pr-review/apply.mjs` step.
+
 ## Issue triage and draft fixes
 
 Two packaged sub-actions ship their own skills, so every repo gets the same behavior from a short

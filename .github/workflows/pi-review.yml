@@ -1,8 +1,8 @@
 name: Pi Code Review
 
-# Dogfoods ./pr-review on this repo's own PRs, so a PR that changes the action
-# reviews itself with its own code. Same job as examples/workflows/pi-review.yml.
-# Repo guidance: .github/pi/review.md.
+# Dogfoods ./pr-review-fusion on this repo's own PRs, running multiple gateway models in
+# parallel and skeptically synthesizing their findings into one review. Same job as
+# examples/workflows/pi-review-fusion.yml. Repo guidance: .github/pi/review.md.
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ jobs:
       github.event.pull_request.user.type != 'Bot' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     permissions:
       contents: read
       pull-requests: write
@@ -28,7 +28,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: ./pr-review
+      - uses: ./pr-review-fusion
         with:
           cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}

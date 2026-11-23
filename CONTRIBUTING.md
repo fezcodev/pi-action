@@ -3,14 +3,14 @@
 ## Layout
 
 - `action.yml` and `runner.mjs`: the runtime. `lib/` holds shared helpers and their tests.
-- `pr-review/`, `issue-triage/`, `issue-fix/`: composite sub-actions with their own skills.
+- `pr-review/`, `pr-review-fusion/`, `issue-triage/`, `issue-fix/`: composite sub-actions with their own skills.
 - `examples/workflows/`: workflows to copy into a repository.
 - `.github/workflows/`: this repository's own CI, smoke test, self-review and release.
 
 ## Checks
 
 ```bash
-for f in runner.mjs lib/*.mjs */apply.mjs pr-review/*.mjs; do node --check "$f"; done
+for f in runner.mjs lib/*.mjs */apply.mjs pr-review/*.mjs pr-review-fusion/*.mjs; do node --check "$f"; done
 node --test
 ```
 
