@@ -15,6 +15,7 @@ import {
   normalizeGuidancePath,
   parseResult,
   planReview,
+  reviewsToCollapse,
   staleBlockingReviews,
   supersededReviews,
 } from "./review.mjs";
@@ -84,6 +85,36 @@ test("supersededReviews picks only this identity's expanded, marked reviews othe
   assert.deepEqual(
     supersededReviews(nodes, "e").map((node) => node.id),
     ["a"],
+  );
+});
+
+test("reviewsToCollapse collapses prior change requests on newer full verdicts and approval fallbacks", () => {
+  const mixed = [
+    ...nodes,
+    { id: "f", viewerDidAuthor: true, isMinimized: false, state: "COMMENTED", body: `note\n${REVIEW_MARKER}` },
+  ];
+
+  assert.deepEqual(
+    reviewsToCollapse(mixed, "e", { event: "REQUEST_CHANGES", plannedEvent: "REQUEST_CHANGES" }).map((n) => n.id),
+    ["a", "f"],
+  );
+  assert.deepEqual(
+    reviewsToCollapse(mixed, "e", { event: "APPROVE", plannedEvent: "APPROVE" }).map((n) => n.id),
+    ["a", "f"],
+  );
+  assert.deepEqual(
+    reviewsToCollapse(mixed, "e", { event: "COMMENT", plannedEvent: "APPROVE" }).map((n) => n.id),
+    ["a", "f"],
+  );
+  // Comment-only mode never hides an active blocking review.
+  assert.deepEqual(
+    reviewsToCollapse(mixed, "e", { event: "COMMENT", plannedEvent: "COMMENT" }).map((n) => n.id),
+    ["f"],
+  );
+  // Partial-diff runs never collapse earlier reviews.
+  assert.deepEqual(
+    reviewsToCollapse(mixed, "e", { event: "REQUEST_CHANGES", plannedEvent: "REQUEST_CHANGES", partialDiff: true }),
+    [],
   );
 });
 

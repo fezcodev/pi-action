@@ -106,6 +106,21 @@ export function supersededReviews(nodes, keepId) {
   );
 }
 
+/**
+ * Superseded reviews safe to collapse after posting the new review.
+ *
+ * Partial-diff runs never hide earlier findings. A full approval, a full
+ * request-changes (which replaces earlier findings on the new head), or an
+ * approval fallback that just dismissed earlier blocks collapses prior
+ * `CHANGES_REQUESTED` reviews; comment-only mode leaves active blocks expanded.
+ */
+export function reviewsToCollapse(nodes, keepId, { event, plannedEvent = event, partialDiff = false } = {}) {
+  if (partialDiff) return [];
+  const replacesBlocking =
+    event === "APPROVE" || event === "REQUEST_CHANGES" || (plannedEvent === "APPROVE" && event === "COMMENT");
+  return supersededReviews(nodes, keepId).filter((node) => replacesBlocking || node.state !== "CHANGES_REQUESTED");
+}
+
 /** This identity's earlier blocking reviews, which a non-approval does not clear. */
 export function staleBlockingReviews(nodes, keepId) {
   return (Array.isArray(nodes) ? nodes : []).filter(

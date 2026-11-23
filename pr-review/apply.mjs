@@ -8,7 +8,14 @@
  */
 
 import { api, env, fail, run, setOutput, summary, warn } from "../lib/common.mjs";
-import { buildBody, leakedSecrets, parseResult, planReview, staleBlockingReviews, supersededReviews } from "./review.mjs";
+import {
+  buildBody,
+  leakedSecrets,
+  parseResult,
+  planReview,
+  reviewsToCollapse,
+  staleBlockingReviews,
+} from "./review.mjs";
 
 const TITLE = "pi-pr-review";
 
@@ -113,11 +120,7 @@ try {
   }
 
   const mutation = `mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }`;
-  // An incomplete review must not hide earlier findings it could not re-check.
-  // A change request still in force stays expanded unless this review approves.
-  const old = partialDiff
-    ? []
-    : supersededReviews(nodes, keepId).filter((node) => event === "APPROVE" || node.state !== "CHANGES_REQUESTED");
+  const old = reviewsToCollapse(nodes, keepId, { event, plannedEvent: plan.event, partialDiff });
   for (const node of old) run("gh", ["api", "graphql", "-f", `id=${node.id}`, "-f", `query=${mutation}`]);
   if (old.length) summary(`Collapsed ${old.length} superseded review(s).`);
 } catch (error) {
