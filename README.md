@@ -74,9 +74,12 @@ in a reusable workflow in a repository of your own and keep your defaults there.
   can re-encode a value it has seen. Under `pull_request` that adds no exposure: fork PRs get no
   secrets, and a same-repo author can already read them by editing a workflow.
 - **`mode: comment`** posts the same review as a plain comment that never approves or blocks.
-- Repos can add `.github/pi/review.md` with what matters (and what to ignore) locally; the skill reads
-  it along with `AGENTS.md`/`CLAUDE.md`. `dry-run: true` writes the planned review to the step
-  summary instead.
+- **Repo guidance:** pass inline `instructions` directly in the workflow, point `instructions-file`
+  at a markdown file on the base branch (fails if explicitly set and missing), or leave
+  `instructions-file` unset to auto-load `.github/pi/review.md` when present on the base branch.
+  When both a file and inline `instructions` are present, inline `instructions` are appended after
+  the file. The skill reads this alongside `AGENTS.md`/`CLAUDE.md`. `dry-run: true` writes the
+  planned review to the step summary instead.
 
 ## Issue triage and draft fixes
 

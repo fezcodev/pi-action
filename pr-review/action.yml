@@ -51,6 +51,19 @@ inputs:
       `comment` posts the same review as a plain COMMENT that never blocks a merge.
     required: false
     default: 'verdict'
+  instructions:
+    description: >-
+      Inline review instructions (what matters, what to ignore). Appended after instructions-file
+      when both are present.
+    required: false
+    default: ''
+  instructions-file:
+    description: >-
+      Repository-relative path to a markdown file with review instructions, read from the PR's base
+      branch. Fails the step if explicitly set and missing. When unset, `.github/pi/review.md` is
+      loaded automatically if present on the base branch.
+    required: false
+    default: ''
   github-token:
     description: >-
       Token that posts the review (needs pull-requests: write), used when no App is configured. The
@@ -171,13 +184,16 @@ runs:
 
     # An empty list would make pi fall back to its default tools, write and bash included. Same
     # trimming as the runner, so no blank value slips past one and not the other.
-    - name: Check tools
+    - name: Check tools and instructions-file
       shell: bash
       env:
         TOOLS: ${{ inputs.tools }}
+        PI_INSTRUCTIONS_FILE: ${{ inputs.instructions-file }}
       run: |
+        set -euo pipefail
         node -e 'if (!process.env.TOOLS.split(",").some((t) => t.trim())) process.exit(1)' \
           || { echo "::error title=pi-pr-review::tools must name at least one tool."; exit 1; }
+        node "${{ github.action_path }}/fetch-guidance.mjs" --validate
 
     # The write token is minted only after the agent exits (see "Mint App write token"):
     # read-only tools are no filesystem sandbox, and a token minted earlier sits in
@@ -209,6 +225,8 @@ runs:
         PI_EVENT_PR: ${{ github.event.pull_request.number }}
         PI_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
         PI_EVENT_BASE: ${{ github.event.pull_request.base.ref }}
+        PI_INSTRUCTIONS: ${{ inputs.instructions }}
+        PI_INSTRUCTIONS_FILE: ${{ inputs.instructions-file }}
       run: |
         set -euo pipefail
         # Unset expectations come from the triggering PR, and only when it is the one under review.
@@ -252,11 +270,12 @@ runs:
             --jq '.[] | {author: .user.login, state, submitted_at, commit_id, body}' | jq -s . > "$work/in/reviews.json"
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/comments?per_page=100" \
             --jq '.[] | {author: .user.login, path, line, body, created_at}' | jq -s . > "$work/in/review-comments.json"
-          # Repo guidance comes from the base branch: a PR must not rewrite the rules it is reviewed by.
-          base_sha="$(jq -r .base_sha "$work/in/pr.json")"
-          gh api "repos/${PI_REPO}/contents/.github/pi/review.md?ref=${base_sha}" \
-            -H 'Accept: application/vnd.github.raw' > "$work/in/review-guidance.md" 2>/dev/null \
-            || rm -f "$work/in/review-guidance.md"
+          # File-based instructions come from the base branch so a PR cannot rewrite the rules it
+          # is reviewed by; inline instructions are appended when provided.
+          PI_BASE_SHA="$(jq -r .base_sha "$work/in/pr.json")" \
+          PI_BASE_REF="$(jq -r .base "$work/in/pr.json")" \
+          PI_GUIDANCE_OUT="$work/in/review-guidance.md" \
+          node "${{ github.action_path }}/fetch-guidance.mjs"
         fi
         {
           echo "run=${run}"
