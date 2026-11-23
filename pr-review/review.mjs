@@ -86,16 +86,22 @@ export function planReview(result, mode) {
 }
 
 /**
- * A clean PR gets a one-line body whatever the agent wrote, so approvals stay
- * quiet. Findings get the agent's report. Both end with the footer and marker
- * the collapse step keys on.
+ * A clean PR gets a one-line body; an approval may also carry brief non-blocking
+ * notes after it. Findings get the agent's report. Both end with the footer and
+ * marker the collapse step keys on.
  */
 export function buildBody({ verdict, report, model, partial = false }) {
   const clean = partial
     ? "⚠️ No blocking issues in the changes I could see, but GitHub did not return the full diff, so this is not an approval."
     : "✅ No blocking issues.";
-  const text = verdict === "approve" ? clean : truncate((report ?? "").trim(), 60000);
-  if (!text) throw new Error("the review body is empty but the verdict is request-changes");
+  const trimmed = (report ?? "").trim();
+  let text;
+  if (verdict === "approve") {
+    text = trimmed ? `${clean}\n\n${truncate(trimmed, 60000 - clean.length - 2)}` : clean;
+  } else {
+    if (!trimmed) throw new Error("the review body is empty but the verdict is request-changes");
+    text = truncate(trimmed, 60000);
+  }
   return `${text}\n\n${footer("Automated review", model)}\n${REVIEW_MARKER}\n`;
 }
 

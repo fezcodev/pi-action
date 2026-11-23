@@ -94,7 +94,7 @@ inputs:
   thinking:
     description: 'Thinking level.'
     required: false
-    default: 'high'
+    default: 'medium'
   message-threads:
     description: >-
       `true` sends Claude turns as Anthropic message threads: after the first request, each turn
@@ -267,9 +267,14 @@ runs:
               "$work/in/files.json" > "$work/in/diff.patch"
           fi
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/reviews?per_page=100" \
-            --jq '.[] | {author: .user.login, state, submitted_at, commit_id, body}' | jq -s . > "$work/in/reviews.json"
+            --jq '.[] | {author: .user.login, author_type: .user.type, state, submitted_at, commit_id, body}' | jq -s . > "$work/in/reviews.json"
           gh api --paginate "repos/${PI_REPO}/pulls/${PI_PR}/comments?per_page=100" \
-            --jq '.[] | {author: .user.login, path, line, body, created_at}' | jq -s . > "$work/in/review-comments.json"
+            --jq '.[] | {author: .user.login, author_type: .user.type, path, line, body, created_at}' | jq -s . > "$work/in/review-comments.json"
+          if ! (gh api --paginate "repos/${PI_REPO}/issues/${PI_PR}/comments?per_page=100" \
+            --jq '.[] | {author: .user.login, author_type: .user.type, body, created_at}' | jq -s .) > "$work/in/issue-comments.json" 2>/dev/null; then
+            echo '[]' > "$work/in/issue-comments.json"
+            echo "::warning title=pi-pr-review::Could not fetch PR conversation comments; continuing without them."
+          fi
           # File-based instructions come from the base branch so a PR cannot rewrite the rules it
           # is reviewed by; inline instructions are appended when provided.
           PI_BASE_SHA="$(jq -r .base_sha "$work/in/pr.json")" \
