@@ -103,12 +103,17 @@ try {
   const [owner, name] = repo.split("/");
   const query = `query($owner: String!, $name: String!, $pr: Int!) {
     repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
+      headRefOid baseRefName
       reviews(last: 100) { nodes { id databaseId submittedAt state isMinimized viewerDidAuthor body } } } } }`;
-  const nodes = JSON.parse(
+  const pullRequest = JSON.parse(
     run("gh", ["api", "graphql", "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `pr=${pr}`, "-f", `query=${query}`]),
-  ).data.repository.pullRequest.reviews.nodes;
+  ).data.repository.pullRequest;
+  const expectedBase = baseRef || live.base?.ref || "";
+  const nodes = pullRequest.reviews.nodes;
   const keepId = review.node_id;
-  if (!hasReviewOrder(nodes, keepId)) {
+  if (pullRequest.headRefOid !== headSha || (expectedBase && pullRequest.baseRefName !== expectedBase)) {
+    warn(TITLE, "PR head or base changed before cleanup; leaving older reviews untouched.");
+  } else if (!hasReviewOrder(nodes, keepId)) {
     warn(TITLE, "Could not establish review order for cleanup; leaving older reviews untouched.");
   } else {
     // An approval this token could only post as a comment still clears its earlier block; a
