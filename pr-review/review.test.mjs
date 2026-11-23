@@ -11,6 +11,7 @@ import {
   combineGuidance,
   decodeContentsFile,
   encodeGuidancePath,
+  hasReviewOrder,
   leakedSecrets,
   normalizeGuidancePath,
   parseResult,
@@ -74,14 +75,54 @@ test("buildBody carries findings and refuses an empty blocking review", () => {
 });
 
 const nodes = [
-  { id: "a", viewerDidAuthor: true, isMinimized: false, state: "CHANGES_REQUESTED", body: `x\n${REVIEW_MARKER}` },
-  { id: "b", viewerDidAuthor: true, isMinimized: true, state: "COMMENTED", body: `x\n${REVIEW_MARKER}` },
-  { id: "c", viewerDidAuthor: false, isMinimized: false, state: "CHANGES_REQUESTED", body: `x\n${REVIEW_MARKER}` },
-  { id: "d", viewerDidAuthor: true, isMinimized: false, state: "COMMENTED", body: "unrelated bot review" },
-  { id: "e", viewerDidAuthor: true, isMinimized: false, state: "APPROVED", body: `ok\n${REVIEW_MARKER}` },
+  {
+    id: "a",
+    databaseId: 10,
+    submittedAt: "2026-11-23T10:00:00Z",
+    viewerDidAuthor: true,
+    isMinimized: false,
+    state: "CHANGES_REQUESTED",
+    body: `x\n${REVIEW_MARKER}`,
+  },
+  {
+    id: "b",
+    databaseId: 11,
+    submittedAt: "2026-11-23T10:01:00Z",
+    viewerDidAuthor: true,
+    isMinimized: true,
+    state: "COMMENTED",
+    body: `x\n${REVIEW_MARKER}`,
+  },
+  {
+    id: "c",
+    databaseId: 12,
+    submittedAt: "2026-11-23T10:02:00Z",
+    viewerDidAuthor: false,
+    isMinimized: false,
+    state: "CHANGES_REQUESTED",
+    body: `x\n${REVIEW_MARKER}`,
+  },
+  {
+    id: "d",
+    databaseId: 13,
+    submittedAt: "2026-11-23T10:03:00Z",
+    viewerDidAuthor: true,
+    isMinimized: false,
+    state: "COMMENTED",
+    body: "unrelated bot review",
+  },
+  {
+    id: "e",
+    databaseId: 15,
+    submittedAt: "2026-11-23T10:05:00Z",
+    viewerDidAuthor: true,
+    isMinimized: false,
+    state: "APPROVED",
+    body: `ok\n${REVIEW_MARKER}`,
+  },
 ];
 
-test("supersededReviews picks only this identity's expanded, marked reviews other than the new one", () => {
+test("supersededReviews picks only this identity's earlier expanded, marked reviews", () => {
   assert.deepEqual(
     supersededReviews(nodes, "e").map((node) => node.id),
     ["a"],
@@ -91,7 +132,15 @@ test("supersededReviews picks only this identity's expanded, marked reviews othe
 test("reviewsToCollapse collapses prior change requests on newer full verdicts and approval fallbacks", () => {
   const mixed = [
     ...nodes,
-    { id: "f", viewerDidAuthor: true, isMinimized: false, state: "COMMENTED", body: `note\n${REVIEW_MARKER}` },
+    {
+      id: "f",
+      databaseId: 14,
+      submittedAt: "2026-11-23T10:04:00Z",
+      viewerDidAuthor: true,
+      isMinimized: false,
+      state: "COMMENTED",
+      body: `note\n${REVIEW_MARKER}`,
+    },
   ];
 
   assert.deepEqual(
@@ -118,7 +167,89 @@ test("reviewsToCollapse collapses prior change requests on newer full verdicts a
   );
 });
 
-test("staleBlockingReviews picks this identity's marked change requests", () => {
+test("cleanup never touches reviews newer than this run or when order cannot be established", () => {
+  const withOverlap = [
+    ...nodes,
+    // Submitted in the same second as "e", earlier by databaseId.
+    {
+      id: "same-sec-older",
+      databaseId: 14,
+      submittedAt: "2026-11-23T10:05:00Z",
+      viewerDidAuthor: true,
+      isMinimized: false,
+      state: "CHANGES_REQUESTED",
+      body: `earlier\n${REVIEW_MARKER}`,
+    },
+    // Submitted in the same second as "e", newer by databaseId.
+    {
+      id: "same-sec-newer",
+      databaseId: 16,
+      submittedAt: "2026-11-23T10:05:00Z",
+      viewerDidAuthor: true,
+      isMinimized: false,
+      state: "CHANGES_REQUESTED",
+      body: `newer same sec\n${REVIEW_MARKER}`,
+    },
+    // Submitted in the same second as "e", missing databaseId (order ambiguous).
+    {
+      id: "same-sec-no-dbid",
+      submittedAt: "2026-11-23T10:05:00Z",
+      viewerDidAuthor: true,
+      isMinimized: false,
+      state: "CHANGES_REQUESTED",
+      body: `ambiguous\n${REVIEW_MARKER}`,
+    },
+    // Submitted later by an overlapping run.
+    {
+      id: "later",
+      databaseId: 20,
+      submittedAt: "2026-11-23T10:05:05Z",
+      viewerDidAuthor: true,
+      isMinimized: false,
+      state: "CHANGES_REQUESTED",
+      body: `later\n${REVIEW_MARKER}`,
+    },
+    // Missing submittedAt (e.g. pending review).
+    {
+      id: "no-time",
+      databaseId: 9,
+      submittedAt: null,
+      viewerDidAuthor: true,
+      isMinimized: false,
+      state: "CHANGES_REQUESTED",
+      body: `pending\n${REVIEW_MARKER}`,
+    },
+  ];
+
+  assert.equal(hasReviewOrder(withOverlap, "e"), true);
+  assert.deepEqual(
+    reviewsToCollapse(withOverlap, "e", { event: "REQUEST_CHANGES", plannedEvent: "REQUEST_CHANGES" }).map((n) => n.id),
+    ["a", "same-sec-older"],
+  );
+  assert.deepEqual(
+    staleBlockingReviews(withOverlap, "e").map((n) => n.id),
+    ["a", "same-sec-older"],
+  );
+
+  // If this run's review is absent from the snapshot, skip cleanup completely.
+  assert.equal(hasReviewOrder(withOverlap, "missing"), false);
+  assert.deepEqual(
+    reviewsToCollapse(withOverlap, "missing", { event: "APPROVE", plannedEvent: "APPROVE" }),
+    [],
+  );
+  assert.deepEqual(staleBlockingReviews(withOverlap, "missing"), []);
+
+  // If this run's review has no valid submittedAt, skip cleanup completely.
+  const withoutKeepTime = nodes.map((n) => (n.id === "e" ? { ...n, submittedAt: null } : n));
+  assert.equal(hasReviewOrder(withoutKeepTime, "e"), false);
+  assert.deepEqual(
+    reviewsToCollapse(withoutKeepTime, "e", { event: "APPROVE", plannedEvent: "APPROVE" }),
+    [],
+  );
+  assert.deepEqual(staleBlockingReviews(withoutKeepTime, "e"), []);
+});
+
+test("staleBlockingReviews picks this identity's earlier marked change requests", () => {
   assert.deepEqual(
     staleBlockingReviews(nodes, "e").map((node) => node.id),
     ["a"],

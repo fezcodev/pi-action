@@ -10,6 +10,7 @@
 import { api, env, fail, run, setOutput, summary, warn } from "../lib/common.mjs";
 import {
   buildBody,
+  hasReviewOrder,
   leakedSecrets,
   parseResult,
   planReview,
@@ -102,27 +103,30 @@ try {
   const [owner, name] = repo.split("/");
   const query = `query($owner: String!, $name: String!, $pr: Int!) {
     repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
-      reviews(last: 100) { nodes { id databaseId state isMinimized viewerDidAuthor body } } } } }`;
+      reviews(last: 100) { nodes { id databaseId submittedAt state isMinimized viewerDidAuthor body } } } } }`;
   const nodes = JSON.parse(
     run("gh", ["api", "graphql", "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `pr=${pr}`, "-f", `query=${query}`]),
   ).data.repository.pullRequest.reviews.nodes;
   const keepId = review.node_id;
-
-  // An approval this token could only post as a comment still clears its earlier block; a
-  // comment-mode review never does.
-  if (plan.event === "APPROVE" && event === "COMMENT") {
-    for (const node of staleBlockingReviews(nodes, keepId)) {
-      api("PUT", `repos/${repo}/pulls/${pr}/reviews/${node.databaseId}/dismissals`, {
-        message: "Superseded by a newer Pi review.",
-        event: "DISMISS",
-      });
+  if (!hasReviewOrder(nodes, keepId)) {
+    warn(TITLE, "Could not establish review order for cleanup; leaving older reviews untouched.");
+  } else {
+    // An approval this token could only post as a comment still clears its earlier block; a
+    // comment-mode review never does.
+    if (plan.event === "APPROVE" && event === "COMMENT") {
+      for (const node of staleBlockingReviews(nodes, keepId)) {
+        api("PUT", `repos/${repo}/pulls/${pr}/reviews/${node.databaseId}/dismissals`, {
+          message: "Superseded by a newer Pi review.",
+          event: "DISMISS",
+        });
+      }
     }
-  }
 
-  const mutation = `mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }`;
-  const old = reviewsToCollapse(nodes, keepId, { event, plannedEvent: plan.event, partialDiff });
-  for (const node of old) run("gh", ["api", "graphql", "-f", `id=${node.id}`, "-f", `query=${mutation}`]);
-  if (old.length) summary(`Collapsed ${old.length} superseded review(s).`);
+    const mutation = `mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }`;
+    const old = reviewsToCollapse(nodes, keepId, { event, plannedEvent: plan.event, partialDiff });
+    for (const node of old) run("gh", ["api", "graphql", "-f", `id=${node.id}`, "-f", `query=${mutation}`]);
+    if (old.length) summary(`Collapsed ${old.length} superseded review(s).`);
+  }
 } catch (error) {
   warn(TITLE, `Could not clean up older reviews: ${error.message}`);
 }
