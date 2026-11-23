@@ -99,19 +99,66 @@ export function buildBody({ verdict, report, model, partial = false }) {
   return `${text}\n\n${footer("Automated review", model)}\n${REVIEW_MARKER}\n`;
 }
 
+function parseTimestamp(value) {
+  return typeof value === "string" && value.trim() ? Date.parse(value) : Number.NaN;
+}
+
+function submittedBefore(node, keep) {
+  if (!node || !keep || node.id === keep.id) return false;
+  const nodeTime = parseTimestamp(node.submittedAt);
+  const keepTime = parseTimestamp(keep.submittedAt);
+  if (!Number.isFinite(nodeTime) || !Number.isFinite(keepTime)) return false;
+  if (nodeTime !== keepTime) return nodeTime < keepTime;
+  return Number.isSafeInteger(node.databaseId) && Number.isSafeInteger(keep.databaseId) && node.databaseId < keep.databaseId;
+}
+
+function findKeep(nodes, keepId) {
+  if (!Array.isArray(nodes) || !keepId) return null;
+  const keep = nodes.find((node) => node?.id === keepId);
+  return keep && Number.isFinite(parseTimestamp(keep.submittedAt)) ? keep : null;
+}
+
+/** True when `keepId` is present in `nodes` with a parseable submission time. */
+export function hasReviewOrder(nodes, keepId) {
+  return findKeep(nodes, keepId) !== null;
+}
+
+/**
+ * Earlier marked reviews by this identity, strictly before `keepId`.
+ * Returns empty when `keepId` or its submission time is missing so concurrent
+ * runs never clean up a review whose order relative to this one is unknown.
+ */
+function priorReviews(nodes, keepId) {
+  const keep = findKeep(nodes, keepId);
+  if (!keep) return [];
+  return nodes.filter(
+    (node) => node?.viewerDidAuthor && node.body?.includes(REVIEW_MARKER) && submittedBefore(node, keep),
+  );
+}
+
 /** Older reviews by this identity that carry the marker and are still expanded. */
 export function supersededReviews(nodes, keepId) {
-  return (Array.isArray(nodes) ? nodes : []).filter(
-    (node) => node?.viewerDidAuthor && !node.isMinimized && node.id !== keepId && node.body?.includes(REVIEW_MARKER),
-  );
+  return priorReviews(nodes, keepId).filter((node) => !node.isMinimized);
+}
+
+/**
+ * Superseded reviews safe to collapse after posting the new review.
+ *
+ * Partial-diff runs never hide earlier findings. A full approval, a full
+ * request-changes (which replaces earlier findings on the new head), or an
+ * approval fallback that just dismissed earlier blocks collapses prior
+ * `CHANGES_REQUESTED` reviews; comment-only mode leaves active blocks expanded.
+ */
+export function reviewsToCollapse(nodes, keepId, { event, plannedEvent = event, partialDiff = false } = {}) {
+  if (partialDiff) return [];
+  const replacesBlocking =
+    event === "APPROVE" || event === "REQUEST_CHANGES" || (plannedEvent === "APPROVE" && event === "COMMENT");
+  return supersededReviews(nodes, keepId).filter((node) => replacesBlocking || node.state !== "CHANGES_REQUESTED");
 }
 
 /** This identity's earlier blocking reviews, which a non-approval does not clear. */
 export function staleBlockingReviews(nodes, keepId) {
-  return (Array.isArray(nodes) ? nodes : []).filter(
-    (node) =>
-      node?.viewerDidAuthor && node.state === "CHANGES_REQUESTED" && node.id !== keepId && node.body?.includes(REVIEW_MARKER),
-  );
+  return priorReviews(nodes, keepId).filter((node) => node.state === "CHANGES_REQUESTED");
 }
 
 /** Credentials from a newline-separated list that appear in the text. */
