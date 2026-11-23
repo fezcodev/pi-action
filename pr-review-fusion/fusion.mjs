@@ -12,7 +12,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,9 +67,23 @@ if (!repo || !prNumber || !contextDir || !workDir) {
   fail(TITLE, "PI_FUSION_REPO, PI_FUSION_PR, PI_FUSION_CONTEXT_DIR and PI_FUSION_WORK_DIR are required.");
 }
 
-const transcriptsDir = path.join(workDir, "transcripts");
+// Kept outside workDir and populated only after the judge exits so model-named transcript
+// filenames never sit beside the anonymized candidates directory during synthesis.
+const transcriptsDir = path.join(path.dirname(workDir), "pi-pr-review-fusion-transcripts");
+rmSync(transcriptsDir, { recursive: true, force: true });
 mkdirSync(transcriptsDir, { recursive: true, mode: 0o700 });
 setOutput("transcripts-dir", transcriptsDir);
+
+const pendingTranscripts = [];
+let transcriptsFlushed = false;
+function flushTranscripts() {
+  if (transcriptsFlushed) return;
+  transcriptsFlushed = true;
+  for (const { src, destName } of pendingTranscripts) {
+    if (existsSync(src)) copyFileSync(src, path.join(transcriptsDir, `${destName}.jsonl`));
+  }
+}
+process.on("exit", flushTranscripts);
 
 /** Build a per-slot context copy with reordered diff.patch when seed > 0. */
 function prepareSlotContext(slotDir, seed) {
@@ -128,7 +142,7 @@ function runSlot({ name, transcriptName, envOverrides }) {
     child.on("close", (code) => {
       const outputs = existsSync(outputFile) ? parseGithubOutput(readFileSync(outputFile, "utf8")) : {};
       if (outputs.transcript && existsSync(outputs.transcript)) {
-        copyFileSync(outputs.transcript, path.join(transcriptsDir, `${transcriptName}.jsonl`));
+        pendingTranscripts.push({ src: outputs.transcript, destName: transcriptName });
       }
       resolve({ code: code ?? 1, stdout, stderr, outputs });
     });
@@ -411,3 +425,4 @@ setOutput("result", judgeRes.outputs.result);
 setOutput("model-used", modelLabel);
 setOutput("models-used", surviving.map((r) => stripProviderPrefix(r.modelUsed)).join(","));
 setOutput("rate-limited", "false");
+flushTranscripts();

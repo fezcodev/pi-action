@@ -100,19 +100,18 @@ on one runner, then synthesizes their findings into a single review. Copy
     cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
 ```
 
-- **Independent parallel passes:** each reviewer runs in an isolated `HOME` and temp directory with
-  no access to other reviewers' output; reviewers after the first receive a deterministically
-  reordered `diff.patch` so they do not fixate on the same first file.
+- **Independent parallel passes:** each reviewer runs with its own `HOME` and temp directory to
+  prevent cache and output collisions (same runner/OS user, not a filesystem sandbox); reviewers
+  after the first receive a deterministically reordered `diff.patch` so they do not fixate on the
+  same first file.
 - **Short-circuit fast path:** unanimous clean approvals skip synthesis completely (zero judge
   calls). If one model hits gateway quota cooldown or fails, the surviving reviewer posts cleanly.
 - **Skeptical verifier synthesis:** when 2+ reviewers survive and at least one raises a finding or
   note, `judge-model` (default `cpa/claude-opus-5-5`, falling back to `cpa/gpt-6.2-sol`) reads
-  anonymized reports (`Reviewer A`, `Reviewer B`, ...), verifies claims directly against the
-  checkout, drops false positives, downgrades minor caveats to non-blocking `**Notes**`, and posts
-  one review via the same deterministic `pr-review/apply.mjs` step.
-- **Custom pipelines:** [`examples/skills/pr-review-fusion/SKILL.md`](examples/skills/pr-review-fusion/SKILL.md)
-  shows a standalone synthesizer skill for teams building a custom multi-provider workflow on top
-  of the root `fezcodev/pi-action@v1` action.
+  anonymized reports (`Reviewer A`, `Reviewer B`, ...) using
+  [`pr-review-fusion/skill/SKILL.md`](pr-review-fusion/skill/SKILL.md), verifies claims directly
+  against the checkout, drops false positives, downgrades minor caveats to non-blocking `**Notes**`,
+  and posts one review via the same deterministic `pr-review/apply.mjs` step.
 
 ## Issue triage and draft fixes
 

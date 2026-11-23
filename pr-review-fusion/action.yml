@@ -130,7 +130,10 @@ inputs:
     required: false
     default: '25'
   timeout-minutes:
-    description: 'Wall-clock limit per agent run (reviewers run concurrently).'
+    description: >-
+      Wall-clock limit per agent run. Parallel reviewers share the first phase and the synthesizer
+      gets its own budget afterward, so keep the caller job's timeout-minutes at least ~2x this
+      plus setup time (e.g. 50 minutes for the default 20).
     required: false
     default: '20'
   on-rate-limit:
