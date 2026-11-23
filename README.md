@@ -85,8 +85,9 @@ in a reusable workflow in a repository of your own and keep your defaults there.
 ## PR review fusion
 
 `fezcodev/pi-action/pr-review-fusion@v1` runs multiple gateway models in parallel (default
-`cpa/gpt-6.2-sol` and `cpa/claude-opus-5-5` at `thinking: medium`) in isolated read-only sessions
-on one runner, then synthesizes their findings into a single review. Copy
+`cpa/claude-opus-5-5` and `cpa/gpt-6.2-sol` at `thinking: medium`, each falling back to the other
+on quota cooldown via `|` per-slot fallbacks) in separate read-only sessions on one runner, then
+synthesizes their findings into a single review. Copy
 [`examples/workflows/pi-review-fusion.yml`](examples/workflows/pi-review-fusion.yml) into
 `.github/workflows/`:
 

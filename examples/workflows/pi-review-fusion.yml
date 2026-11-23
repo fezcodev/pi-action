@@ -35,12 +35,14 @@ jobs:
         with:
           cliproxyapi-api-key: ${{ secrets.CLIPROXYAPI_API_KEY }}
           cliproxyapi-base-url: ${{ vars.CLIPROXYAPI_BASE_URL }}
-          # Defaults: parallel cpa/gpt-6.2-sol + cpa/claude-opus-5-5 at thinking: medium,
+          # Defaults: parallel Reviewer A (cpa/claude-opus-5-5 | cpa/gpt-6.2-sol) and
+          # Reviewer B (cpa/gpt-6.2-sol | cpa/claude-opus-5-5) at thinking: medium,
           # synthesized by cpa/claude-opus-5-5 (falling back to cpa/gpt-6.2-sol).
           # models: |
-          #   cpa/gpt-6.2-sol
-          #   cpa/claude-opus-5-5
+          #   cpa/claude-opus-5-5 | cpa/gpt-6.2-sol
+          #   cpa/gpt-6.2-sol | cpa/claude-opus-5-5
           # judge-model: cpa/claude-opus-5-5
+          # judge-fallback-models: cpa/gpt-6.2-sol
           # instructions: |           # inline review guidance (appended after instructions-file)
           #   Focus on backwards-compatible API changes and SQL migrations.
           # instructions-file: .github/pi/review.md

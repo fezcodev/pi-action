@@ -10,6 +10,7 @@ import {
   normalizeGatewayModel,
   parseGithubOutput,
   parseModels,
+  parseModelSlots,
   reorderDiffFiles,
   slotLabel,
   stripProviderPrefix,
@@ -79,9 +80,31 @@ test("parseGithubOutput handles both key=value and multiline heredoc entries", (
   });
 });
 
-test("formatModelLabel joins distinct models and appends a third judge model only when distinct", () => {
+test("parseModelSlots parses per-slot fallback chains and rejects empty or invalid entries", () => {
+  assert.deepEqual(
+    parseModelSlots("cpa/claude-opus-5-5 | cpa/gpt-6.2-sol\ncpa/gpt-6.2-sol | cpa/claude-opus-5-5 | cpa/gpt-6.2-sol"),
+    [
+      { model: "cpa/claude-opus-5-5", fallbacks: ["cpa/gpt-6.2-sol"] },
+      { model: "cpa/gpt-6.2-sol", fallbacks: ["cpa/claude-opus-5-5"] },
+    ],
+  );
+  assert.deepEqual(parseModelSlots("gpt-6.2-sol, claude-opus-5-5"), [
+    { model: "cpa/gpt-6.2-sol", fallbacks: [] },
+    { model: "cpa/claude-opus-5-5", fallbacks: [] },
+  ]);
+  assert.throws(() => parseModelSlots("cpa/claude-opus-5-5 | "), /empty fallback/);
+  assert.throws(() => parseModelSlots("  "), /at least one gateway model/);
+  assert.throws(() => parseModelSlots("cpa/claude-opus-5-5 | openai/gpt-6.2-sol"), /gateway models/);
+});
+
+test("formatModelLabel joins distinct models, collapses repeated fallback models, and appends a distinct judge", () => {
   assert.equal(stripProviderPrefix("cpa/gpt-6.2-sol"), "gpt-6.2-sol");
-  assert.equal(formatModelLabel(["cpa/gpt-6.2-sol", "cpa/claude-opus-5-5"], "cpa/claude-opus-5-5"), "gpt-6.2-sol + claude-opus-5-5");
+  assert.equal(formatModelLabel(["cpa/claude-opus-5-5", "cpa/gpt-6.2-sol"], "cpa/claude-opus-5-5"), "claude-opus-5-5 + gpt-6.2-sol");
+  assert.equal(formatModelLabel(["cpa/claude-opus-5-5", "cpa/claude-opus-5-5"], "cpa/claude-opus-5-5"), "claude-opus-5-5 ×2");
+  assert.equal(
+    formatModelLabel(["cpa/claude-opus-5-5", "cpa/claude-opus-5-5"], "cpa/gpt-6.2-sol"),
+    "claude-opus-5-5 ×2 -> gpt-6.2-sol",
+  );
   assert.equal(
     formatModelLabel(["cpa/gpt-6.2-sol", "cpa/claude-opus-5-5"], "cpa/gemini-3-pro"),
     "gpt-6.2-sol + claude-opus-5-5 -> gemini-3-pro",
