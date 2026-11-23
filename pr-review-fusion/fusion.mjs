@@ -24,6 +24,7 @@ import {
   normalizeGatewayModel,
   parseGithubOutput,
   parseModels,
+  parseModelSlots,
   reorderDiffFiles,
   slotLabel,
   stripProviderPrefix,
@@ -33,12 +34,12 @@ const TITLE = "pi-pr-review-fusion";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RUNNER_PATH = path.resolve(__dirname, "..", "runner.mjs");
 
-let models;
+let modelSlots;
 let judgeModel;
 let judgeFallbacks;
 try {
-  models = parseModels(process.env.PI_FUSION_MODELS, "models", { required: true });
-  judgeModel = normalizeGatewayModel(env("PI_FUSION_JUDGE_MODEL") || models[0], "judge-model");
+  modelSlots = parseModelSlots(process.env.PI_FUSION_MODELS, "models");
+  judgeModel = normalizeGatewayModel(env("PI_FUSION_JUDGE_MODEL") || modelSlots[0].model, "judge-model");
   judgeFallbacks = parseModels(process.env.PI_FUSION_JUDGE_FALLBACK_MODELS, "judge-fallback-models", {
     required: false,
   });
@@ -169,9 +170,12 @@ function extractFailureDetail(runResult) {
 // Phase 1: Parallel independent reviews
 // ---------------------------------------------------------------------------
 
-process.stdout.write(`pi-pr-review-fusion: starting ${models.length} parallel reviewer(s): ${models.join(", ")}\n`);
+const slotDesc = modelSlots.map((slot) =>
+  slot.fallbacks.length ? `${slot.model} (fallback: ${slot.fallbacks.join(", ")})` : slot.model,
+);
+process.stdout.write(`pi-pr-review-fusion: starting ${modelSlots.length} parallel reviewer(s): ${slotDesc.join("; ")}\n`);
 
-const reviewerPromises = models.map(async (model, index) => {
+const reviewerPromises = modelSlots.map(async ({ model, fallbacks }, index) => {
   const label = slotLabel(index);
   const slug = `reviewer-${label.toLowerCase()}`;
   const slotDir = path.join(workDir, "runs", slug);
@@ -189,7 +193,7 @@ const reviewerPromises = models.map(async (model, index) => {
       PI_ACTION_PROMPT_FILE: "",
       PI_ACTION_SKILL: reviewerSkill,
       PI_ACTION_MODEL: model,
-      PI_ACTION_FALLBACK_MODELS: "",
+      PI_ACTION_FALLBACK_MODELS: fallbacks.join("\n"),
       PI_ACTION_THINKING: reviewerThinking,
       PI_ACTION_MAX_TURNS: reviewerMaxTurns,
     },
@@ -296,7 +300,7 @@ function writeFusionSummary(judgeInfo) {
 if (decision.action === "rate-limited") {
   writeFusionSummary(null);
   setOutput("rate-limited", "true");
-  setOutput("model-used", models.map(stripProviderPrefix).join(" + "));
+  setOutput("model-used", formatModelLabel(modelSlots.map((slot) => slot.model)));
   setOutput("models-used", "");
   if (onRateLimit === "skip") {
     warn(TITLE, "Every reviewer model hit gateway quota cooldown; skipping review.");

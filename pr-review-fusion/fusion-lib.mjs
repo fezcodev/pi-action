@@ -115,12 +115,47 @@ export function parseGithubOutput(text) {
   return outputs;
 }
 
+/**
+ * Parse parallel reviewer slots from comma- or newline-separated entries.
+ * Each slot may list `|`-separated fallback models (e.g. `cpa/claude-opus-5-5 | cpa/gpt-6.2-sol`).
+ */
+export function parseModelSlots(raw, inputName = "models") {
+  const entries = String(raw ?? "")
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length === 0) {
+    throw new Error(`\`${inputName}\` must name at least one gateway model.`);
+  }
+  return entries.map((entry) => {
+    const parts = entry.split("|").map((part) => part.trim());
+    if (parts.some((part) => !part)) {
+      throw new Error(`\`${inputName}\` contains an empty fallback entry in '${entry}'.`);
+    }
+    const [model, ...rest] = parts.map((part) => normalizeGatewayModel(part, inputName));
+    const seen = new Set([model]);
+    const fallbacks = [];
+    for (const candidate of rest) {
+      if (!seen.has(candidate)) {
+        seen.add(candidate);
+        fallbacks.push(candidate);
+      }
+    }
+    return { model, fallbacks };
+  });
+}
+
 /** Format the footer model label for a fused review. */
 export function formatModelLabel(reviewerModels, judgeModel = "") {
-  const reviewers = [...new Set(reviewerModels.map(stripProviderPrefix).filter(Boolean))];
+  const counts = new Map();
+  for (const raw of reviewerModels) {
+    const name = stripProviderPrefix(raw);
+    if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const parts = [...counts.entries()].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
   const judge = stripProviderPrefix(judgeModel);
-  const base = reviewers.join(" + ");
-  if (!judge || reviewers.length <= 1 || reviewers.includes(judge)) return base || judge;
+  const base = parts.join(" + ");
+  if (!judge || reviewerModels.length <= 1 || counts.has(judge)) return base || judge;
   return `${base} -> ${judge}`;
 }
 

@@ -85,12 +85,14 @@ inputs:
     default: 'false'
   models:
     description: >-
-      Gateway models to run in parallel, comma- or newline-separated. Use distinct model lineages
-      (e.g. OpenAI + Anthropic) so blind spots decorrelate.
+      Gateway models to run in parallel, comma- or newline-separated. Each slot may list `|`-separated
+      fallback models (e.g. `cpa/claude-opus-5-5 | cpa/gpt-6.2-sol`) so a slot falls back when its
+      primary model hits quota cooldown or is unavailable. Use distinct model lineages so blind spots
+      decorrelate.
     required: false
     default: |
-      cpa/gpt-6.2-sol
-      cpa/claude-opus-5-5
+      cpa/claude-opus-5-5 | cpa/gpt-6.2-sol
+      cpa/gpt-6.2-sol | cpa/claude-opus-5-5
   judge-model:
     description: 'Gateway model for the skeptical synthesizer pass when 2+ reviewers produce findings or notes.'
     required: false
