@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,7 +17,9 @@ import {
   leakedSecrets,
   normalizeGuidancePath,
   parseResult,
+  parseRoundCap,
   planReview,
+  reviewHistory,
   reviewsToCollapse,
   staleBlockingReviews,
   supersededReviews,
@@ -63,7 +67,10 @@ test("buildBody keeps clean approvals to one line and preserves optional non-blo
     report: "**Notes**\n\n- `a.js:12`: minor nit worth knowing.",
     model: "cpa/gpt-6.2-sol",
   });
-  assert.match(noted, /^✅ No blocking issues\.\n\n\*\*Notes\*\*\n\n- `a\.js:12`: minor nit worth knowing\.\n\n<sub>/);
+  assert.match(
+    noted,
+    /^✅ No blocking issues\. The notes below are optional: nothing needs to change before merge\.\n\n\*\*Notes\*\*\n\n- `a\.js:12`: minor nit worth knowing\.\n\n<sub>/,
+  );
   assert.ok(noted.trimEnd().endsWith(REVIEW_MARKER));
 
   const huge = buildBody({ verdict: "approve", report: "x".repeat(65000), model: "cpa/gpt-6.2-sol" });
@@ -79,6 +86,7 @@ test("buildBody does not vouch for a PR whose full diff was unavailable", () => 
   const noted = buildBody({ verdict: "approve", report: "**Notes**\n\n- Check the skipped lockfile.", model: "", partial: true });
   assert.match(noted, /not an approval/);
   assert.match(noted, /Check the skipped lockfile/);
+  assert.doesNotMatch(noted, /optional/);
 });
 
 test("buildBody carries findings and refuses an empty blocking review", () => {
@@ -346,4 +354,115 @@ test("fetch-guidance --validate accepts valid or empty paths and rejects bad pat
   });
   assert.equal(bad.status, 1);
   assert.match(bad.stdout, /::error title=pi-pr-review::/);
+});
+
+test("parseRoundCap defaults to 3 and rejects values outside 1-20", () => {
+  assert.equal(parseRoundCap(""), 3);
+  assert.equal(parseRoundCap(undefined), 3);
+  assert.equal(parseRoundCap(" 5 "), 5);
+  for (const bad of ["0", "21", "2.5", "-1", "three"]) {
+    assert.throws(() => parseRoundCap(bad), /round-cap/);
+  }
+});
+
+test("reviewHistory counts distinct earlier commits reviewed by the bot", () => {
+  const bot = (commit, state, at) => ({
+    author_type: "Bot",
+    state,
+    commit_id: commit,
+    submitted_at: at,
+    body: `review\n${REVIEW_MARKER}\n`,
+  });
+  assert.deepEqual(reviewHistory([], "h"), {
+    round: 1,
+    round_cap: 3,
+    past_cap: false,
+    earlier_rounds: 0,
+    last_reviewed_sha: null,
+    last_verdict: null,
+  });
+
+  const reviews = [
+    bot("c2", "APPROVED", "2026-01-02T00:00:00Z"),
+    bot("c1", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z"),
+    bot("c1", "CHANGES_REQUESTED", "2026-01-01T00:05:00Z"),
+    bot("h", "APPROVED", "2026-01-03T00:00:00Z"),
+    { ...bot("x", "APPROVED", "2026-01-04T00:00:00Z"), author_type: "User" },
+    { author_type: "Bot", state: "APPROVED", commit_id: "y", submitted_at: "2026-01-04T00:00:00Z", body: "other bot" },
+  ];
+  assert.deepEqual(reviewHistory(reviews, "h"), {
+    round: 3,
+    round_cap: 3,
+    past_cap: false,
+    earlier_rounds: 2,
+    last_reviewed_sha: "c2",
+    last_verdict: "approve",
+  });
+  const past = reviewHistory([...reviews, bot("c3", "COMMENTED", "2026-01-02T12:00:00Z")], "h", 3);
+  assert.equal(past.round, 4);
+  assert.equal(past.past_cap, true);
+  assert.equal(past.last_reviewed_sha, "c3");
+  assert.equal(past.last_verdict, "comment");
+});
+
+test("fetch-history writes the round and the diff since the last review", () => {
+  const script = path.join(__dirname, "fetch-history.mjs");
+  const bad = spawnSync(process.execPath, [script, "--validate"], {
+    env: { ...process.env, PI_ROUND_CAP: "0" },
+    encoding: "utf8",
+  });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /::error title=pi-pr-review::round-cap/);
+
+  const dir = mkdtempSync(path.join(os.tmpdir(), "pi-history-"));
+  try {
+    const bin = path.join(dir, "bin");
+    mkdirSync(bin);
+    // Fake gh: compare status comes from FAKE_COMPARE_STATUS; the diff request prints a patch.
+    writeFileSync(
+      path.join(bin, "gh"),
+      `#!${process.execPath}\nconst a = process.argv.slice(2);\n` +
+        `if (a.includes("--jq")) process.stdout.write(process.env.FAKE_COMPARE_STATUS + "\\n");\n` +
+        `else process.stdout.write("diff --git a/x b/x\\n" + a[1] + "\\n");\n`,
+      { mode: 0o755 },
+    );
+    const ctx = path.join(dir, "in");
+    mkdirSync(ctx);
+    writeFileSync(path.join(ctx, "pr.json"), JSON.stringify({ head_sha: "h" }));
+    const run = (reviews, compareStatus) => {
+      writeFileSync(path.join(ctx, "reviews.json"), JSON.stringify(reviews));
+      const res = spawnSync(process.execPath, [script], {
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+          PI_REPO: "o/r",
+          PI_CONTEXT_DIR: ctx,
+          PI_ROUND_CAP: "1",
+          FAKE_COMPARE_STATUS: compareStatus,
+        },
+        encoding: "utf8",
+      });
+      assert.equal(res.status, 0, res.stdout + res.stderr);
+      return JSON.parse(readFileSync(path.join(ctx, "review-history.json"), "utf8"));
+    };
+
+    const first = run([], "ahead");
+    assert.equal(first.round, 1);
+    assert.equal(first.since_last_review, null);
+    assert.equal(existsSync(path.join(ctx, "since-last-review.patch")), false);
+
+    const earlier = [{ author_type: "Bot", state: "APPROVED", commit_id: "c1", submitted_at: "2026-01-01T00:00:00Z", body: REVIEW_MARKER }];
+    const ahead = run(earlier, "ahead");
+    assert.equal(ahead.round, 2);
+    assert.equal(ahead.past_cap, true);
+    assert.equal(ahead.since_last_review, "since-last-review.patch");
+    assert.match(readFileSync(path.join(ctx, "since-last-review.patch"), "utf8"), /repos\/o\/r\/compare\/c1\.\.\.h/);
+
+    const rebased = run(earlier, "diverged");
+    assert.equal(rebased.since_last_review, null);
+    assert.match(rebased.since_last_review_unavailable, /diverged/);
+    assert.equal(existsSync(path.join(ctx, "since-last-review.patch")), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -64,6 +64,14 @@ inputs:
       loaded automatically if present on the base branch.
     required: false
     default: ''
+  round-cap:
+    description: >-
+      Review rounds (distinct commits reviewed) before the reviewer stops re-reviewing code earlier
+      rounds saw. Later rounds review only the commits since the last review, post no optional
+      notes, and ask the author to rethink the approach if blocking issues remain. Whole number
+      from 1 to 20.
+    required: false
+    default: '3'
   github-token:
     description: >-
       Token that posts the review (needs pull-requests: write), used when no App is configured. The
@@ -213,6 +221,7 @@ runs:
       env:
         TOOLS: ${{ inputs.tools }}
         PI_INSTRUCTIONS_FILE: ${{ inputs.instructions-file }}
+        PI_ROUND_CAP: ${{ inputs.round-cap }}
         PI_FUSION_MODELS: ${{ inputs.models }}
         PI_FUSION_JUDGE_MODEL: ${{ inputs.judge-model }}
         PI_FUSION_JUDGE_FALLBACK_MODELS: ${{ inputs.judge-fallback-models }}
@@ -221,6 +230,7 @@ runs:
         node -e 'if (!process.env.TOOLS.split(",").some((t) => t.trim())) process.exit(1)' \
           || { echo "::error title=pi-pr-review-fusion::tools must name at least one tool."; exit 1; }
         node "${{ github.action_path }}/../pr-review/fetch-guidance.mjs" --validate
+        node "${{ github.action_path }}/../pr-review/fetch-history.mjs" --validate
         node "${{ github.action_path }}/fusion.mjs" --validate
 
     # The write token is minted only after all agents exit: read-only tools are no filesystem
@@ -253,6 +263,7 @@ runs:
         PI_EVENT_BASE: ${{ github.event.pull_request.base.ref }}
         PI_INSTRUCTIONS: ${{ inputs.instructions }}
         PI_INSTRUCTIONS_FILE: ${{ inputs.instructions-file }}
+        PI_ROUND_CAP: ${{ inputs.round-cap }}
       run: |
         set -euo pipefail
         if [ "$PI_REPO" = "$GITHUB_REPOSITORY" ] && [ "$PI_PR" = "$PI_EVENT_PR" ]; then
@@ -302,6 +313,7 @@ runs:
           PI_BASE_REF="$(jq -r .base "$work/in/pr.json")" \
           PI_GUIDANCE_OUT="$work/in/review-guidance.md" \
           node "${{ github.action_path }}/../pr-review/fetch-guidance.mjs"
+          PI_CONTEXT_DIR="$work/in" node "${{ github.action_path }}/../pr-review/fetch-history.mjs"
         fi
         {
           echo "run=${run}"
