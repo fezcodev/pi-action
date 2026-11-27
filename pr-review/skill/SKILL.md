@@ -146,7 +146,9 @@ found nothing blocking and `request-changes` when at least one finding should st
 else.
 
 A clean PR is the verdict line alone. The action posts a fixed one-line approval, so do not summarize
-what you checked or add praise:
+what you checked, which round this is, which earlier findings are fixed, or what you decided not to
+raise, and do not add praise. Anything else in an approval reads as notes, and an agent author acts
+on it:
 
 ```
 VERDICT: approve
@@ -154,7 +156,8 @@ VERDICT: approve
 
 If nothing blocks merge, you may optionally include 1–3 brief notes, each tagged `Nit` or
 `Pre-existing`, after a blank line. The action labels them optional. Most clean PRs need no notes,
-and rounds past the cap never get them; omit this section unless it adds real value:
+and rounds past the cap never get them; omit this section unless it adds real value. An approval
+with notes holds only the `**Notes**` list:
 
 ```markdown
 VERDICT: approve

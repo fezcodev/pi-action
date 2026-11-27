@@ -25,6 +25,8 @@ notes, and dropping false positives.
 - **Read-only.** Do not modify tracked files, install dependencies, or run repository scripts.
 - **Write as one reviewer.** Do not leak meta-commentary like "Reviewer A said..." or "Reviewer B
   missed..." into the final review body. The output should read as one concise, authoritative review.
+  Your verification and triage stay out of it too: never say what you checked, which round this
+  is, which earlier findings are fixed, or which candidate concerns you dropped and why.
 - Do not sign the review; the action adds a footer naming the models and run.
 
 The prompt names the PR, the prefetched PR context directory, the anonymized candidate reviews
@@ -89,14 +91,18 @@ will do whatever a note asks, and each fix push starts another round of review.
 
 Your **final message** must start with `VERDICT: approve` or `VERDICT: request-changes`.
 
-Clean PR (nothing blocking, no notes worth keeping):
+Clean PR (nothing blocking, no notes worth keeping). The action posts a fixed one-line approval,
+so the verdict line is the whole message, even when you verified fixes or dropped candidate
+findings to get there. Anything else in an approval reads as notes to the author, and an agent
+author acts on it:
 
 ```
 VERDICT: approve
 ```
 
 Approved with 1–3 brief notes, each tagged `Nit` or `Pre-existing` (omit unless genuinely useful,
-and always past the round cap). The action labels them optional:
+and always past the round cap). The action labels them optional, so an approval holds only the
+`**Notes**` list, with no summary before or after it:
 
 ```markdown
 VERDICT: approve
