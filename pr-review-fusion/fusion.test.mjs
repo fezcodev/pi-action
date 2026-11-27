@@ -130,6 +130,20 @@ test("decideFusionOutcome short-circuits cleanly on unanimous approvals, single 
   assert.equal(decideFusionOutcome([rlA, failB]).action, "fail");
 });
 
+test("decideFusionOutcome drops notes past the round cap without a synthesizer pass", () => {
+  const cleanA = { slot: "A", requestedModel: "cpa/gpt-6.2-sol", status: "ok", verdict: "approve", report: "" };
+  const notedB = { slot: "B", requestedModel: "cpa/claude-opus-5-5", status: "ok", verdict: "approve", report: "**Notes**\n- nit" };
+  const blockB = { slot: "B", requestedModel: "cpa/claude-opus-5-5", status: "ok", verdict: "request-changes", report: "1. bug" };
+  const failA = { slot: "A", requestedModel: "cpa/gpt-6.2-sol", status: "failed", error: "boom" };
+  const pastCap = { pastCap: true };
+
+  assert.equal(decideFusionOutcome([cleanA, notedB], pastCap).action, "short-circuit-approve");
+  assert.equal(decideFusionOutcome([cleanA, blockB], pastCap).action, "synthesize");
+  assert.equal(decideFusionOutcome([failA, notedB], pastCap).action, "short-circuit-approve");
+  assert.equal(decideFusionOutcome([failA, blockB], pastCap).action, "passthrough");
+  assert.equal(decideFusionOutcome([failA, notedB]).action, "passthrough");
+});
+
 test("fusion.mjs --validate accepts valid model config and rejects invalid models", () => {
   const script = path.join(__dirname, "fusion.mjs");
   const ok = spawnSync(process.execPath, [script, "--validate"], {

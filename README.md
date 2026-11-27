@@ -75,6 +75,14 @@ in a reusable workflow in a repository of your own and keep your defaults there.
   can re-encode a value it has seen. Under `pull_request` that adds no exposure: fork PRs get no
   secrets, and a same-repo author can already read them by editing a workflow.
 - **`mode: comment`** posts the same review as a plain comment that never approves or blocks.
+- **Severity:** only findings this PR introduces block. Approvals may carry up to three notes
+  tagged `Nit` or `Pre-existing` (a problem the base branch already has), and the posted review
+  labels them optional so an agent author does not push another round for them.
+- **Review rounds converge:** a round is one distinct commit reviewed. Later rounds check earlier
+  findings and review the diff since the last reviewed commit, without digging for new edge cases
+  in code already reviewed. Past `round-cap` (default `3`) approvals carry no notes, and a PR that
+  still has blocking issues gets a **Step back** section asking the author to rethink the approach
+  instead of another list of point fixes.
 - **Repo guidance:** pass inline `instructions` directly in the workflow, point `instructions-file`
   at a markdown file on the base branch (fails if explicitly set and missing), or leave
   `instructions-file` unset to auto-load `.github/pi/review.md` when present on the base branch.
@@ -112,7 +120,9 @@ synthesizes their findings into a single review. Copy
   anonymized reports (`Reviewer A`, `Reviewer B`, ...) using
   [`pr-review-fusion/skill/SKILL.md`](pr-review-fusion/skill/SKILL.md), verifies claims directly
   against the checkout, drops false positives, downgrades minor caveats to non-blocking `**Notes**`,
-  and posts one review via the same deterministic `pr-review/apply.mjs` step.
+  applies the same severity and round rules, and posts one review via the same deterministic
+  `pr-review/apply.mjs` step. Past `round-cap`, unanimous approvals skip synthesis and post
+  without notes.
 
 ## Issue triage and draft fixes
 

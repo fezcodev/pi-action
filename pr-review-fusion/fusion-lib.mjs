@@ -165,8 +165,11 @@ export function formatModelLabel(reviewerModels, judgeModel = "") {
  * Each run has:
  *   { slot, requestedModel, status: "ok" | "rate-limited" | "failed",
  *     modelUsed, result, verdict, report, error }
+ *
+ * Past the review round cap approvals carry no notes, so unanimous approvals short-circuit
+ * even with notes and a lone surviving approval passes through as the bare verdict.
  */
-export function decideFusionOutcome(runs) {
+export function decideFusionOutcome(runs, { pastCap = false } = {}) {
   const list = Array.isArray(runs) ? runs : [];
   const ok = list.filter((run) => run?.status === "ok");
   if (ok.length === 0) {
@@ -178,9 +181,12 @@ export function decideFusionOutcome(runs) {
     return { action: "fail", reason: errors.join("; ") || "no reviewer produced a result" };
   }
   if (ok.length === 1) {
+    if (pastCap && ok[0].verdict === "approve") return { action: "short-circuit-approve", runs: ok };
     return { action: "passthrough", run: ok[0] };
   }
-  const allCleanApprovals = ok.every((run) => run.verdict === "approve" && !String(run.report ?? "").trim());
+  const allCleanApprovals = ok.every(
+    (run) => run.verdict === "approve" && (pastCap || !String(run.report ?? "").trim()),
+  );
   if (allCleanApprovals) {
     return { action: "short-circuit-approve", runs: ok };
   }

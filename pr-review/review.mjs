@@ -5,6 +5,58 @@ import { footer, marker, truncate } from "../lib/common.mjs";
 export const REVIEW_MARKER = marker("pr-review");
 export const VERDICTS = new Set(["approve", "request-changes"]);
 export const DEFAULT_INSTRUCTIONS_FILE = ".github/pi/review.md";
+export const DEFAULT_ROUND_CAP = 3;
+export const HISTORY_FILE = "review-history.json";
+export const SINCE_LAST_REVIEW_FILE = "since-last-review.patch";
+
+const REVIEW_STATES = {
+  APPROVED: "approve",
+  CHANGES_REQUESTED: "request-changes",
+  COMMENTED: "comment",
+  DISMISSED: "dismissed",
+};
+
+/** Parse the `round-cap` input: empty means the default, otherwise a whole number from 1 to 20. */
+export function parseRoundCap(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return DEFAULT_ROUND_CAP;
+  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 20) {
+    throw new Error(`round-cap must be a whole number from 1 to 20, got '${text}'`);
+  }
+  return Number(text);
+}
+
+/**
+ * Count this action's earlier review rounds from `reviews.json`. A round is one distinct
+ * commit reviewed before `headSha`, so re-running on the same head adds none. Only Bot
+ * reviews carrying the marker count; a person cannot move the count by quoting the marker.
+ */
+export function reviewHistory(reviews, headSha, roundCap = DEFAULT_ROUND_CAP) {
+  const ours = (Array.isArray(reviews) ? reviews : [])
+    .filter(
+      (review) =>
+        review?.author_type === "Bot" &&
+        typeof review.body === "string" &&
+        review.body.includes(REVIEW_MARKER) &&
+        typeof review.commit_id === "string" &&
+        review.commit_id,
+    )
+    .map((review, index) => ({ review, index, time: parseTimestamp(review.submitted_at) }))
+    .sort((a, b) => (Number.isFinite(a.time) && Number.isFinite(b.time) && a.time !== b.time ? a.time - b.time : a.index - b.index))
+    .map(({ review }) => review);
+  const earlier = ours.filter((review) => review.commit_id !== headSha);
+  const earlierRounds = new Set(earlier.map((review) => review.commit_id)).size;
+  const last = earlier.at(-1);
+  const round = earlierRounds + 1;
+  return {
+    round,
+    round_cap: roundCap,
+    past_cap: round > roundCap,
+    earlier_rounds: earlierRounds,
+    last_reviewed_sha: last?.commit_id ?? null,
+    last_verdict: last ? (REVIEW_STATES[last.state] ?? String(last.state ?? "").toLowerCase()) : null,
+  };
+}
 
 /**
  * Validate and normalize a repository-relative guidance file path.
@@ -97,7 +149,9 @@ export function buildBody({ verdict, report, model, partial = false }) {
   const trimmed = (report ?? "").trim();
   let text;
   if (verdict === "approve") {
-    text = trimmed ? `${clean}\n\n${truncate(trimmed, 60000 - clean.length - 2)}` : clean;
+    // Agent authors otherwise treat notes as work, and every fix push starts another round.
+    const head = trimmed && !partial ? `${clean} The notes below are optional: nothing needs to change before merge.` : clean;
+    text = trimmed ? `${head}\n\n${truncate(trimmed, 60000 - head.length - 2)}` : head;
   } else {
     if (!trimmed) throw new Error("the review body is empty but the verdict is request-changes");
     text = truncate(trimmed, 60000);

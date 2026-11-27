@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { env, fail, setOutput, summary, warn } from "../lib/common.mjs";
-import { buildBody, parseResult, planReview } from "../pr-review/review.mjs";
+import { HISTORY_FILE, buildBody, parseResult, planReview } from "../pr-review/review.mjs";
 import {
   decideFusionOutcome,
   formatModelLabel,
@@ -272,7 +272,19 @@ for (const run of reviewerRuns) {
   }
 }
 
-const decision = decideFusionOutcome(reviewerRuns);
+function readPastCap() {
+  const historyPath = path.join(contextDir, HISTORY_FILE);
+  if (!existsSync(historyPath)) return false;
+  try {
+    return JSON.parse(readFileSync(historyPath, "utf8")).past_cap === true;
+  } catch (error) {
+    warn(TITLE, `Ignoring unreadable ${HISTORY_FILE}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+const pastCap = readPastCap();
+const decision = decideFusionOutcome(reviewerRuns, { pastCap });
 
 function writeFusionSummary(judgeInfo) {
   summary("### Pi fusion review\n");
@@ -327,7 +339,11 @@ if (decision.action === "passthrough") {
 
 if (decision.action === "short-circuit-approve") {
   const label = formatModelLabel(decision.runs.map((r) => r.modelUsed));
-  writeFusionSummary({ model: "skipped", outcome: "unanimous clean approval", turns: "0" });
+  writeFusionSummary({
+    model: "skipped",
+    outcome: pastCap ? "approval past the round cap (notes dropped)" : "unanimous clean approval",
+    turns: "0",
+  });
   setOutput("result", "VERDICT: approve");
   setOutput("model-used", label);
   setOutput("models-used", decision.runs.map((r) => stripProviderPrefix(r.modelUsed)).join(","));
